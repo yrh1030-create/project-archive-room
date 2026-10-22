@@ -37,7 +37,7 @@
 
 ### 安装
 
-到 [Releases](../../releases) 下载 `项目档案室安装程序.exe`，双击安装。已安装旧版本时会自动覆盖升级，档案库和设置都保留。
+到 [Releases](../../releases) 下载 `ProjectArchiveRoom-Setup-1.1.exe`（项目档案室安装程序），双击安装。已安装旧版本时会自动覆盖升级，档案库和设置都保留。
 
 首次打开时选择“项目总文件夹”（放各项目资料的那个文件夹），软件会自动扫描、分类、建立档案库。
 
@@ -119,7 +119,7 @@ build.ps1   一键编译脚本
 
 ### Installation
 
-Download `项目档案室安装程序.exe` from [Releases](../../releases) and run it. An existing installation is upgraded in place; the archive database and settings are kept.
+Download `ProjectArchiveRoom-Setup-1.1.exe` from [Releases](../../releases) and run it. An existing installation is upgraded in place; the archive database and settings are kept.
 
 On first launch, choose the root folder that contains all project folders. The app scans, classifies and builds the archive database automatically.
 
