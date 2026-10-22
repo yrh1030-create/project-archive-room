@@ -20,12 +20,14 @@ namespace DangAn
         public string BaseUrl { get; set; }
         public string Model { get; set; }
         public string KeyData { get; set; }
-        public AiConfig() { Provider = "DeepSeek"; BaseUrl = "https://api.deepseek.com"; Model = "deepseek-chat"; KeyData = ""; }
+        /// <summary>上次从接口查到的可用模型（用于下拉切换）。</summary>
+        public List<string> Models { get; set; }
+        public AiConfig() { Provider = "DeepSeek"; BaseUrl = "https://api.deepseek.com"; Model = "deepseek-flash"; KeyData = ""; Models = new List<string>(); }
 
         /// <summary>名称、接口地址、默认模型。都是兼容 OpenAI 的 /chat/completions 接口。</summary>
         public static readonly string[][] Presets =
         {
-            new[] { "DeepSeek", "https://api.deepseek.com", "deepseek-chat" },
+            new[] { "DeepSeek", "https://api.deepseek.com", "deepseek-flash" },
             new[] { "通义千问", "https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-plus" },
             new[] { "Kimi（月之暗面）", "https://api.moonshot.cn/v1", "moonshot-v1-128k" },
             new[] { "智谱 GLM", "https://open.bigmodel.cn/api/paas/v4", "glm-4-plus" },
@@ -54,9 +56,12 @@ namespace DangAn
 
         public static AiConfig Load()
         {
-            try { if (File.Exists(FilePath)) return new JavaScriptSerializer().Deserialize<AiConfig>(File.ReadAllText(FilePath, Encoding.UTF8)) ?? new AiConfig(); }
+            AiConfig c = null;
+            try { if (File.Exists(FilePath)) c = new JavaScriptSerializer().Deserialize<AiConfig>(File.ReadAllText(FilePath, Encoding.UTF8)); }
             catch { }
-            return new AiConfig();
+            if (c == null) c = new AiConfig();
+            if (c.Models == null) c.Models = new List<string>();
+            return c;
         }
 
         public void Save()
@@ -87,6 +92,34 @@ namespace DangAn
             if (json) body["response_format"] = new Dictionary<string, object> { { "type", "json_object" } };
             var msg = Message(Send(cfg, body));
             return msg == null || !msg.ContainsKey("content") ? "" : Convert.ToString(msg["content"]);
+        }
+
+        /// <summary>向接口查询可用模型（GET /models，兼容 OpenAI 格式）。</summary>
+        public static List<string> ListModels(AiConfig cfg)
+        {
+            if (cfg.Key == "") throw new AiException("请先填写 API 密钥。");
+            ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072;
+            string url = cfg.BaseUrl.TrimEnd('/');
+            if (url.EndsWith("/chat/completions")) url = url.Substring(0, url.Length - "/chat/completions".Length);
+            var req = (HttpWebRequest)WebRequest.Create(url + "/models");
+            req.Headers["Authorization"] = "Bearer " + cfg.Key; req.Timeout = 30000;
+            try
+            {
+                using (var resp = (HttpWebResponse)req.GetResponse())
+                using (var r = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
+                {
+                    var o = new JavaScriptSerializer().DeserializeObject(r.ReadToEnd()) as Dictionary<string, object>;
+                    var data = o != null && o.ContainsKey("data") ? o["data"] as object[] : null;
+                    if (data == null) return new List<string>();
+                    return data.OfType<Dictionary<string, object>>().Where(d => d.ContainsKey("id")).Select(d => Convert.ToString(d["id"])).OrderBy(x => x).ToList();
+                }
+            }
+            catch (WebException we)
+            {
+                var hr = we.Response as HttpWebResponse;
+                if (hr != null && (int)hr.StatusCode == 401) throw new AiException("接口密钥不正确（401）。");
+                throw new AiException("查询模型列表失败：" + we.Message + "（这个服务商可能不提供模型列表，可以直接手填模型名）");
+            }
         }
 
         /// <summary>多轮对话（可带工具）：返回 AI 这一轮的 message（可能含 tool_calls）。</summary>
@@ -343,6 +376,15 @@ namespace DangAn
                     string v = c.Value.Trim();
                     if (Regex.IsMatch(v, @"^-?\d+(\.\d+)?$") && double.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out d)) SetP(cell, "Value2", d);
                     else SetP(cell, "Value2", v);
+                    if (v.Length > 8)
+                        try
+                        {
+                            // 长文字：自动换行、上下居中，免得只露出中间一截
+                            var area = Get(cell, "MergeArea");
+                            SetP(area, "WrapText", true); SetP(area, "VerticalAlignment", -4108);
+                            if (Convert.ToInt32(Get(Get(area, "Cells"), "Count")) == 1) Call(Get(cell, "EntireRow"), "AutoFit");
+                        }
+                        catch { }
                     try { SetP(Get(cell, "Interior"), "Color", 204 * 65536 + 242 * 256 + 255); } catch { }   // 浅黄
                     try
                     {

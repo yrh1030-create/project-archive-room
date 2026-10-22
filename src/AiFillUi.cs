@@ -177,7 +177,11 @@ namespace DangAn
                 L("接口地址");
                 var url = new TextBox { Location = new Point(fx, y), Width = fw, Text = cfg.BaseUrl }; f.Controls.Add(url); y += Ui.S(40);
                 L("模型");
-                var model = new TextBox { Location = new Point(fx, y), Width = fw, Text = cfg.Model }; f.Controls.Add(model); y += Ui.S(40);
+                var model = new ComboBox { Location = new Point(fx, y), Width = fw - Ui.S(140), DropDownStyle = ComboBoxStyle.DropDown, Text = cfg.Model };
+                foreach (var mm in cfg.Models) model.Items.Add(mm);
+                model.Text = cfg.Model;
+                var bList = Ui.Btn("获取模型列表", false, "refresh"); bList.Location = new Point(fx + fw - Ui.S(132), y - Ui.S(4));
+                f.Controls.Add(model); f.Controls.Add(bList); y += Ui.S(40);
                 L("API 密钥");
                 var key = new TextBox { Location = new Point(fx, y), Width = fw, Text = cfg.Key, UseSystemPasswordChar = true }; f.Controls.Add(key); y += Ui.S(34);
                 var show = new CheckBox { Text = "显示密钥", Location = new Point(fx, y), AutoSize = true }; show.CheckedChanged += (s, e) => key.UseSystemPasswordChar = !show.Checked; f.Controls.Add(show); y += Ui.S(30);
@@ -191,11 +195,26 @@ namespace DangAn
                 {
                     if (loading) return;
                     var p = AiConfig.Presets[prov.SelectedIndex];
-                    if (p[1] != "") { url.Text = p[1]; model.Text = p[2]; }
+                    if (p[1] != "") { url.Text = p[1]; model.Items.Clear(); model.Text = p[2]; cfg.Models.Clear(); }
                 };
                 loading = false;
 
                 Action apply = () => { cfg.Provider = (string)prov.SelectedItem; cfg.BaseUrl = url.Text.Trim(); cfg.Model = model.Text.Trim(); cfg.Key = key.Text.Trim(); };
+                bList.Click += (s, e) =>
+                {
+                    apply(); f.Cursor = Cursors.WaitCursor;
+                    List<string> list = null; string err = null;
+                    var th = new Thread(() => { try { list = AiClient.ListModels(cfg); } catch (Exception ex) { err = ex.Message; } });
+                    th.IsBackground = true; th.Start();
+                    while (th.IsAlive) { Application.DoEvents(); Thread.Sleep(50); }
+                    f.Cursor = Cursors.Default;
+                    if (err != null) { Ui.Info(err); return; }
+                    if (list.Count == 0) { Ui.Info("接口没有返回模型列表，可以直接手填模型名。"); return; }
+                    cfg.Models = list;
+                    string cur = model.Text; model.Items.Clear(); foreach (var mm in list) model.Items.Add(mm);
+                    model.Text = list.Contains(cur) ? cur : list[0];
+                    model.DroppedDown = true;
+                };
                 var bTest = Ui.Btn("测试连接", false); bTest.Location = new Point(lx, Ui.S(276));
                 bTest.Click += (s, e) =>
                 {

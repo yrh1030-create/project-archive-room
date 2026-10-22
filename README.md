@@ -47,13 +47,13 @@
 
 | 服务商 | 接口地址 | 默认模型 |
 |---|---|---|
-| DeepSeek | `https://api.deepseek.com` | `deepseek-chat` |
+| DeepSeek | `https://api.deepseek.com` | `deepseek-flash`（也可切换 `deepseek-v4-pro`） |
 | 通义千问 | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-plus` |
 | Kimi | `https://api.moonshot.cn/v1` | `moonshot-v1-128k` |
 | 智谱 GLM | `https://open.bigmodel.cn/api/paas/v4` | `glm-4-plus` |
 | 自定义 | 任何兼容 OpenAI `/chat/completions` 的接口 | — |
 
-- 密钥用 Windows 账户加密保存在本机（`%APPDATA%\项目档案室\ai.json`），**不写进档案库，也不在安装包里**，分享档案库或安装包都不会带出去。
+- 点“获取模型列表”会向接口查询当前可用的模型；AI 助手页底部的“模型”下拉框可随时切换（快模型日常用，强模型处理复杂任务）。（`%APPDATA%\项目档案室\ai.json`），**不写进档案库，也不在安装包里**，分享档案库或安装包都不会带出去。
 - 资料只保存在本机。只有使用 AI 功能时，才会把相关项目的文字资料发给你设置的 AI 接口。
 - AI 的结果都要人工核对：AI 填表和 AI 整理都会先列出结果和原文依据，确认后才写入。
 
@@ -127,7 +127,7 @@ On first launch, choose the root folder that contains all project folders. The a
 
 Settings → *AI 接口设置*: choose a provider, enter the API key and click *Test connection*. Any OpenAI-compatible `/chat/completions` endpoint works (DeepSeek, Qwen, Kimi, GLM, or custom).
 
-- The key is encrypted with the current Windows account (DPAPI) and stored locally in `%APPDATA%\项目档案室\ai.json`. It is **never written to the archive database or the installer**.
+- *Fetch model list* queries the API for available models; the model drop-down at the bottom of the AI assistant switches models at any time. (DPAPI) and stored locally in `%APPDATA%\项目档案室\ai.json`. It is **never written to the archive database or the installer**.
 - All data stays on your computer. Only when you use an AI feature is the relevant project text sent to the API you configured.
 - AI output is always shown with its evidence for human review before anything is written.
 

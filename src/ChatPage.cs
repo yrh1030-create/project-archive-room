@@ -14,7 +14,7 @@ namespace DangAn
     {
         readonly MainForm m; Store St { get { return m.St; } }
         AiChat chat;
-        RichTextBox view; TextBox input; Button send; Label status;
+        RichTextBox view; TextBox input; Button send; Label status; ComboBox modelBox; bool modelLoading;
         FlowLayoutPanel attachRow, outRow, tips;
         readonly List<string> attachments = new List<string>();
         bool busy;
@@ -72,7 +72,12 @@ namespace DangAn
             };
             send = Ui.Btn("发送", true, "chat"); send.Click += (s, e) => Send();
             status = Ui.Lbl("", 8.5f, false, Ui.Sub); status.Margin = new Padding(Ui.S(10), Ui.S(12), 0, 0);
-            ops.Controls.AddRange(new Control[] { send, bAtt, status });
+            var ml = Ui.Lbl("模型", 9f, false, Ui.Sub); ml.Margin = new Padding(Ui.S(12), Ui.S(11), Ui.S(4), 0);
+            modelBox = new ComboBox { DropDownStyle = ComboBoxStyle.DropDown, Width = Ui.S(170), Font = Ui.F(9.5f), Margin = new Padding(0, Ui.S(7), 0, 0) };
+            modelBox.SelectedIndexChanged += (s, e) => SaveModel();
+            modelBox.Leave += (s, e) => SaveModel();
+            modelBox.DropDown += (s, e) => { if (modelBox.Items.Count <= 1) FetchModels(); };
+            ops.Controls.AddRange(new Control[] { send, bAtt, ml, modelBox, status });
             box.Controls.Add(input); box.Controls.Add(attachRow); box.Controls.Add(ops);
 
             AllowDrop = true;
@@ -90,8 +95,45 @@ namespace DangAn
         void UpdateStatus()
         {
             var cfg = AiConfig.Load();
-            status.Text = cfg.Ready ? "接口：" + cfg.Provider + " · " + cfg.Model + "　Enter 发送，Shift+Enter 换行" : "还没设置 AI 接口密钥，点右上角“AI 接口设置”";
+            status.Text = cfg.Ready ? cfg.Provider + "　Enter 发送，Shift+Enter 换行" : "还没设置 AI 接口密钥，点右上角“AI 接口设置”";
             status.ForeColor = cfg.Ready ? Ui.Sub : Ui.Orange;
+            modelLoading = true;
+            modelBox.Items.Clear();
+            foreach (var x in cfg.Models) modelBox.Items.Add(x);
+            if (cfg.Model != "" && !modelBox.Items.Contains(cfg.Model)) modelBox.Items.Insert(0, cfg.Model);
+            modelBox.Text = cfg.Model;
+            modelLoading = false;
+        }
+
+        /// <summary>切换模型：马上保存，下一条消息起生效。</summary>
+        void SaveModel()
+        {
+            if (modelLoading) return;
+            string mname = modelBox.Text.Trim();
+            var cfg = AiConfig.Load();
+            if (mname == "" || mname == cfg.Model) return;
+            cfg.Model = mname; cfg.Save();
+            Line("　· 已切换模型：" + mname + "（从下一条消息起使用）", Ui.Sub, 9f, false);
+        }
+
+        void FetchModels()
+        {
+            var cfg = AiConfig.Load();
+            if (!cfg.Ready) return;
+            Cursor = Cursors.WaitCursor;
+            List<string> list = null;
+            var th = new Thread(() => { try { list = AiClient.ListModels(cfg); } catch { } });
+            th.IsBackground = true; th.Start();
+            while (th.IsAlive) { Application.DoEvents(); Thread.Sleep(30); }
+            Cursor = Cursors.Default;
+            if (list == null || list.Count == 0) return;
+            cfg.Models = list; cfg.Save();
+            modelLoading = true;
+            string cur = modelBox.Text;
+            modelBox.Items.Clear(); foreach (var x in list) modelBox.Items.Add(x);
+            if (cur != "" && !list.Contains(cur)) modelBox.Items.Insert(0, cur);
+            modelBox.Text = cur;
+            modelLoading = false;
         }
 
         void NewChat()
