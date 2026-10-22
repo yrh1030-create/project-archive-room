@@ -26,7 +26,8 @@ namespace DangAn
 
 一、contracts：本项目实际签订的合同、协议（施工、监理、设计、勘察、检测、测量、造价咨询/预算审核/结算审核、招标代理等；补充协议单独一条）。
   - kind：合同类型，如“施工合同”“监理合同”“设计合同”“预算审核合同”“招标代理合同”“施工补充协议”；
-  - party：乙方 / 承包人 / 受托人全称；amount：签约合同价（元，数字）；date：签订日期 yyyy-MM-dd（原文只有年月就写 yyyy-MM，不要自己补日；找不到写空）；
+  - party：乙方 / 承包人 / 受托人全称；amount：签约合同价（元，数字）；date：签订日期 yyyy-MM-dd（看“订立时间”“签订日期”、签字盖章页、封面落款；原文只有年月就写 yyyy-MM，不要自己补日；找不到或识别不清写空）；
+  - 签订日期是手写、识别成乱码或空白（如“2026年 月 日”“生年彐月工日”）时，date 写空，并在 note 里写“签订日期手写/空白，见原件第N页”（N 取摘录里【第N页】的页码）。
   - content：合同内容一句话；source：合同原件路径（照抄【文件清单】里的路径）；evidence：原文摘录（金额、乙方所在的那句话，60 字以内）。
   - 中标/成交通知书、采购公告不是合同，但没有合同原件时可以据此登记，并在 evidence 里写明“据成交通知书”。
 二、payments：有付款依据的收支。支出的依据是记账凭证、国库集中支付凭证、银行付款回单、支付审批单；收入是上级资金拨付到账的凭证。
@@ -38,13 +39,13 @@ namespace DangAn
 五、【登记信息】是以前整理时手工登记的，可能有错。与合同、成交通知书、凭证等原件原文冲突时，一律以原文为准；金额以大写为准（大写、小写不一致时按大写），并在 notes 里指出登记信息哪里错了。
 
 输出格式：
-{""contracts"":[{""kind"":"""",""party"":"""",""amount"":0,""date"":"""",""content"":"""",""source"":"""",""evidence"":""""}],
+{""contracts"":[{""kind"":"""",""party"":"""",""amount"":0,""date"":"""",""content"":"""",""note"":"""",""source"":"""",""evidence"":""""}],
  ""payments"":[{""date"":"""",""dir"":""支出"",""amount"":0,""summary"":"""",""party"":"""",""contract"":"""",""voucher_no"":"""",""voucher_file"":"""",""invoice_file"":"""",""evidence"":""""}],
  ""notes"":[""""]}";
 
         static readonly Regex ContractFile = new Regex("合同|协议|中标|成交|委托书");
         static readonly Regex PayFile = new Regex("凭证|回单|支付|拨付|付款|拨款|国库|到账|明细");
-        static readonly string[] ContractWords = { "签约合同价", "合同金额", "合同价款", "合同总价", "大写", "小写", "乙方", "承包人", "受托人", "签订", "预付款", "付款方式", "支付" };
+        static readonly string[] ContractWords = { "签约合同价", "合同金额", "合同价款", "合同总价", "大写", "小写", "乙方", "承包人", "受托人", "签订", "订立时间", "签约日期", "预付款", "付款方式", "支付" };
 
         public static AiFinPlan Analyze(Store st, AiConfig cfg, Project p, Action<string> log)
         {
@@ -60,7 +61,7 @@ namespace DangAn
                 var c = new Contract
                 {
                     Kind = S(x, "kind"), Party = S(x, "party"), Amount = N(x, "amount"), Date = S(x, "date"),
-                    Content = S(x, "content"), Source = Resolve(files, S(x, "source")), Note = "AI 整理"
+                    Content = S(x, "content"), Source = Resolve(files, S(x, "source")), Note = S(x, "note") != "" ? "AI 整理：" + S(x, "note") : "AI 整理"
                 };
                 if (c.Kind == "" || (c.Party == "" && c.Amount == 0)) continue;
                 var it = new AiConItem { C = c, Evidence = S(x, "evidence") };
@@ -73,6 +74,7 @@ namespace DangAn
                     if (it.Existing.Amount == 0 && c.Amount > 0) blanks.Add("金额");
                     if (it.Existing.Date == "" && c.Date != "") blanks.Add("日期");
                     if (it.Existing.Source == "" && c.Source != "") blanks.Add("原件");
+                    if (it.Existing.Date == "" && c.Date == "" && S(x, "note").Contains("日期")) blanks.Add("日期说明");
                     bool diff = it.Existing.Amount > 0 && c.Amount > 0 && Math.Abs(it.Existing.Amount - c.Amount) >= 1;
                     it.Status = "已有" + (blanks.Count > 0 ? "，补上：" + string.Join("、", blanks) : "") + (diff ? "；台账金额 " + Ui.Money(it.Existing.Amount) + "，原文 " + Ui.Money(c.Amount) + "（勾选则改成原文）" : "");
                     it.Use = blanks.Count > 0 && !diff;
@@ -113,6 +115,7 @@ namespace DangAn
                 if (e.Date == "") e.Date = it.C.Date;
                 if (e.Source == "") e.Source = it.C.Source;
                 if (e.Content == "") e.Content = it.C.Content;
+                if (e.Date == "" && it.C.Date == "" && it.C.Note.Contains("日期") && !e.Note.Contains("日期")) e.Note = (e.Note + "；" + it.C.Note.Replace("AI 整理：", "")).Trim('；');
                 if (it.C.Amount > 0 && (e.Amount == 0 || Math.Abs(e.Amount - it.C.Amount) >= 1)) { e.Amount = it.C.Amount; touched.Add(e); }
                 n++;
             }
@@ -156,7 +159,7 @@ namespace DangAn
         }
 
         /// <summary>AI 给的路径（相对项目文件夹或只有文件名）→ 档案里的相对路径。</summary>
-        static string Resolve(List<FileRec> files, string s)
+        public static string Resolve(List<FileRec> files, string s)
         {
             s = (s ?? "").Trim().Replace('/', '\\').Trim('\\');
             if (s == "") return "";
@@ -212,7 +215,7 @@ namespace DangAn
                 string t = Squeeze(texts[f.Rel]);
                 string sig = t.Length > 200 ? t.Substring(0, 200) : t;
                 if (!seen.Add(sig)) continue;   // 内容相同的副本只给一份
-                string part = "〔" + Rel(p, f.Rel) + "〕\n" + Windows(t, ContractWords, 1200, 2600) + "\n";
+                string part = "〔" + Rel(p, f.Rel) + "〕\n" + Windows(t, ContractWords, 1200, 2600) + (t.Length > 3200 ? "\n……（结尾）" + t.Substring(t.Length - 600) : "") + "\n";
                 if (part.Length > left) { if (left < 800) break; part = part.Substring(0, left); }
                 sb.Append(part); left -= part.Length;
             }

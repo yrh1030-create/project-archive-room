@@ -171,6 +171,13 @@ namespace DangAn
 
         public void SetCrumb(string s) { crumb.Text = s; }
 
+        /// <summary>切到 AI 助手页并交代一件事。</summary>
+        public void AskAi(string text)
+        {
+            ShowPage("AI 助手");
+            ((ChatPage)pages["AI 助手"]).Ask(text);
+        }
+
         public Project CurrentProject
         {
             get { Control v; return current == "项目" && pages.TryGetValue("项目", out v) ? ((ProjectView)v).P : null; }

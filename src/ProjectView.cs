@@ -239,7 +239,15 @@ namespace DangAn
             Clear(secInfo);
             var edit = Ui.Btn("编辑全部栏目（" + P.Fields.Count + "）", false, "table");
             edit.Click += (s, e) => { if (FieldEditor.Edit(this, P)) { St.Save(); Reload(); } };
-            secInfo.Controls.Add(SectionHead("关键信息", "填报时点右侧“复制”", edit));
+            var aiInfo = Ui.Btn("AI 核对补全", true, "chat");
+            aiInfo.Click += (s, e) =>
+            {
+                Commit();
+                m.AskAi("请核对并补全项目“" + P.Name + "”（编号 " + P.Id + "）的关键信息：先用 project_detail 看现有登记，再逐项查原文（立项/可研批复、计划文件、合同、成交通知书、开工令、验收、结算决算、支付凭证等）。"
+                    + "空着的栏目能查到就补上，与原文不符的更正，查不到的保持空着。改动用 set_project_info 提交给我确认，每项写明依据。"
+                    + "合同台账里缺的合同、错的金额，也用 upsert_contract 一并提交。");
+            };
+            secInfo.Controls.Add(SectionHead("关键信息", "填报时点右侧“复制”", aiInfo, edit));
             var kl = new InfoList();
             foreach (var f in KeyFields)
             {
@@ -527,7 +535,9 @@ namespace DangAn
             ex.Click += (s, e) => Exports.Contracts(this, St, new[] { P }, "合同台账_" + P.Code);
             var pdfx = Ui.Btn("导出合同PDF", false, "contract");
             pdfx.Click += (s, e) => { Commit(); m.ExportContractPdfs(new List<Project> { P }, P.Name + " 经济合同 PDF"); };
-            secContracts.Controls.Add(SectionHead("合同台账", "单元格可直接修改；双击“来源文件”打开原件", add, del, ex, pdfx));
+            var aiCon = Ui.Btn("AI 整理", true, "coin");
+            aiCon.Click += (s, e) => { Commit(); if (AiFinanceForm.Run(this, St, P)) Reload(); };
+            secContracts.Controls.Add(SectionHead("合同台账", "单元格可直接修改；双击“来源文件”打开原件", aiCon, add, del, ex, pdfx));
             var tp = new Panel { Height = Ui.S(30), BackColor = Color.White }; conTotal.Location = new Point(0, Ui.S(4)); tp.Controls.Add(conTotal);
             secContracts.Controls.Add(tp);
             conGrid.Rows.Clear();

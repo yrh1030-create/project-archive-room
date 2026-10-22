@@ -53,13 +53,36 @@ namespace DangAn
             if (op.Status != AsyncStatus.Completed) throw new Exception("渲染失败：" + op.Status);
         }
 
-        public static string Pdf(string path, int maxPages)
+        /// <summary>识别 PDF：前 maxPages 页，再加最后 2 页（合同的签订日期、盖章页一般在最后）。</summary>
+        public static string Pdf(string path, int maxPages) { return Pdf(path, maxPages, 2); }
+
+        public static string Pdf(string path, int head, int tail)
         {
             var doc = OpenPdf(path);
+            int count = (int)doc.PageCount, h = Math.Min(head, count);
+            var idx = Enumerable.Range(0, h).ToList();
+            for (int i = Math.Max(h, count - tail); i < count; i++) idx.Add(i);
+            var sb = Render(doc, idx);
+            if (idx.Count < count) sb.Append("（共 " + count + " 页，识别了前 " + h + " 页和最后 " + (idx.Count - h) + " 页）");
+            return sb.ToString();
+        }
+
+        /// <summary>只识别最后几页（以前只识别了前面若干页的文件，补上尾页）。</summary>
+        public static string PdfTail(string path, int skipHead, int tail, out int count)
+        {
+            var doc = OpenPdf(path);
+            count = (int)doc.PageCount;
+            var idx = new List<int>();
+            for (int i = Math.Max(skipHead, count - tail); i < count; i++) idx.Add(i);
+            return Render(doc, idx).ToString();
+        }
+
+        static StringBuilder Render(PdfDocument doc, List<int> pages)
+        {
             var sb = new StringBuilder();
-            int n = (int)Math.Min(doc.PageCount, (uint)maxPages);
-            for (uint i = 0; i < n; i++)
+            foreach (int pi in pages)
             {
+                uint i = (uint)pi;
                 using (var page = doc.GetPage(i))
                 using (var ms = new InMemoryRandomAccessStream())
                 {
@@ -74,8 +97,7 @@ namespace DangAn
                     sb.Append("【第").Append(i + 1).Append("页】\n").Append(t).Append('\n');
                 }
             }
-            if (doc.PageCount > n) sb.Append("（共 " + doc.PageCount + " 页，仅识别前 " + n + " 页）");
-            return sb.ToString();
+            return sb;
         }
 
         /// <summary>逐页识别，返回每页文字（最多 maxPages 页）。</summary>
@@ -98,6 +120,23 @@ namespace DangAn
                     list.Add(Recognize(ms));
                 }
             return list;
+        }
+
+        /// <summary>识别 PDF 的某一页（从 0 起）。</summary>
+        public static string PdfPage(string path, int index)
+        {
+            var doc = OpenPdf(path);
+            using (var page = doc.GetPage((uint)index))
+            using (var ms = new InMemoryRandomAccessStream())
+            {
+                double w = page.Size.Width, h = page.Size.Height;
+                double scale = Math.Min(2200, OcrEngine.MaxImageDimension) / Math.Max(w, h);
+                var opt = new PdfPageRenderOptions();
+                opt.DestinationWidth = (uint)Math.Max(1, w * scale);
+                opt.DestinationHeight = (uint)Math.Max(1, h * scale);
+                WaitA(page.RenderToStreamAsync(ms, opt));
+                return Recognize(ms);
+            }
         }
 
         public static int PdfPageCount(string path)
@@ -271,8 +310,27 @@ namespace DangAn
 
         public static List<FileRec> Pending(Store st)
         {
-            return st.Lib.Files.Where(f => (OcrExts.Contains(f.Ext) || OfficeExts.Contains(f.Ext))
-                && !st.Texts.ContainsKey(f.Rel) && !Tried(st, f) && f.Size < 200L * 1024 * 1024).ToList();
+            return st.Lib.Files.Where(f => (OcrExts.Contains(f.Ext) || OfficeExts.Contains(f.Ext)) && f.Size < 200L * 1024 * 1024
+                && ((!st.Texts.ContainsKey(f.Rel) && !Tried(st, f)) || NeedsTail(st, f))).ToList();
+        }
+
+        static readonly System.Text.RegularExpressions.Regex OldCut = new System.Text.RegularExpressions.Regex(@"（共 (\d+) 页，仅识别前 (\d+) 页）");
+
+        /// <summary>以前只识别了前 12 页的长 PDF：还要补识别最后 2 页。</summary>
+        static bool NeedsTail(Store st, FileRec f)
+        {
+            string t; return f.Ext == ".pdf" && st.Texts.TryGetValue(f.Rel, out t) && t != null && t.Contains("仅识别前 ");
+        }
+
+        static string AddTail(string path, string old)
+        {
+            var m = OldCut.Match(old);
+            int head = m.Success ? int.Parse(m.Groups[2].Value) : MaxPdfPages, count;
+            string tail;
+            try { tail = Ocr.PdfTail(path, head, 2, out count); }
+            catch { return OldCut.Replace(old, "（共 $1 页，识别了前 $2 页；尾页识别失败）"); }
+            int extra = Math.Max(0, Math.Min(2, count - head));
+            return OldCut.Replace(old, "") + tail + (count > head + extra ? "（共 " + count + " 页，识别了前 " + head + " 页和最后 " + extra + " 页）" : "");
         }
 
         static bool Tried(Store st, FileRec f)
@@ -323,7 +381,14 @@ namespace DangAn
                     Parallel.ForEach(ocr, po, f =>
                     {
                         string t = null;
-                        try { t = f.Ext == ".pdf" ? Ocr.Pdf(st.FullPath(f), MaxPdfPages) : Ocr.Image(st.FullPath(f)); } catch { }
+                        string old = null;
+                        lock (lk) st.Texts.TryGetValue(f.Rel, out old);
+                        try
+                        {
+                            if (f.Ext == ".pdf" && old != null && old.Contains("仅识别前 ")) t = AddTail(st.FullPath(f), old);
+                            else t = f.Ext == ".pdf" ? Ocr.Pdf(st.FullPath(f), MaxPdfPages) : Ocr.Image(st.FullPath(f));
+                        }
+                        catch { t = old; }
                         finish(f, t);
                     });
                 }

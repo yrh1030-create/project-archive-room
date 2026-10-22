@@ -23,6 +23,8 @@ namespace DangAn
         public readonly List<string> Outputs = new List<string>();
         public Action<string> OnTool;          // 工具执行时的提示（界面显示成灰色小字）
         public Action<string> OnOutput;        // 生成了新文件
+        /// <summary>AI 提交的档案修改（合同台账、关键信息、收支），等用户确认后才写入。</summary>
+        public readonly List<PendingChange> Pending = new List<PendingChange>();
         public const int MaxRounds = 30, ToolResultMax = 12000, OldToolMax = 1200;
         readonly List<string> attached = new List<string>();   // 本次对话收到过的所有附件
 
@@ -59,7 +61,9 @@ namespace DangAn
                 + "7. 附件路径照抄“附件N：”后面的完整路径，也可以直接写“附件1”。\n"
                 + "8. 汇总很多项目时，先用 list_projects 里的台账数据，表里加一列“数据来源”（如“据合同台账”“据合同原文”），台账与登记信息不一致的标出来；只对有疑问的再去查原文，不要每个项目都逐一翻原文。\n"
                 + "9. 所有数字计算（元换万元、比例、合计、差额、核对）都用 calculate 工具算，不要心算。\n"
-                + "10. 回答用简洁的中文；少用 Markdown 表格和符号，需要表格时生成 Excel。";
+                + "10. 用户要你把信息登记、补全、更正到项目的关键信息、合同台账、财务收支时：先查原文核实，再用 set_project_info / upsert_contract / add_payment / remove_record 提交。"
+                + "这些修改不会马上生效，会列在对话下方等用户点“确认写入”；每条都写明依据（文件名和原文摘录）。只有发票、没有付款凭证的，不登记为已付款。提交后告诉用户请在下方核对确认。\n"
+                + "11. 回答用简洁的中文；少用 Markdown 表格和符号，需要表格时生成 Excel。";
         }
 
         static Dictionary<string, object> Msg(string role, string content) { return new Dictionary<string, object> { { "role", role }, { "content", content } }; }
@@ -146,6 +150,21 @@ namespace DangAn
             Fn("create_excel", "生成一张 Excel 表（.xlsx）。", Props(
                 "file_name", P("string", "文件名"), "sheet_name", P("string", "工作表名"),
                 "headers", Arr("表头", P("string", "")), "rows", Arr("数据行，每行是字符串数组", Arr("", P("string", "")))), "file_name", "headers", "rows"),
+            Fn("set_project_info", "提交对项目关键信息（登记栏目）的补充或更正，等用户确认后写入。栏目名用 project_detail 里列出的名称。", Props(
+                "project_id", P("string", "项目编号"),
+                "fields", Arr("要改的栏目", Obj(Props("name", P("string", "栏目名，如 施工合同／成交金额"), "value", P("string", "新内容"), "source", P("string", "依据：文件名 + 原文摘录"))))), "project_id", "fields"),
+            Fn("upsert_contract", "提交合同台账的新增或修改（按合同类型对上已有的一条就修改，否则新增），等用户确认后写入。金额单位元。", Props(
+                "project_id", P("string", "项目编号"), "kind", P("string", "合同类型，如 施工合同"), "match_kind", P("string", "要修改的已有合同类型（与 kind 不同时填，可选）"),
+                "party", P("string", "合同相对方全称"), "amount", P("number", "合同金额（元）"), "date", P("string", "签订日期"),
+                "paid", P("number", "已付（元，有付款凭证才填）"), "unpaid", P("number", "未付（元）"), "final", P("string", "审定/决算金额或说明"),
+                "content", P("string", "合同内容"), "note", P("string", "备注"), "source", P("string", "合同原件路径（search_archive 返回的）")), "project_id", "kind"),
+            Fn("add_payment", "提交一笔收支记录（需有付款凭证、回单或拨款到账依据），等用户确认后写入。", Props(
+                "project_id", P("string", "项目编号"), "date", P("string", "日期"), "dir", P("string", "支出 或 收入"), "amount", P("number", "金额（元）"),
+                "summary", P("string", "摘要"), "party", P("string", "对方单位"), "contract", P("string", "对应合同类型"), "voucher_no", P("string", "凭证号"),
+                "voucher_file", P("string", "凭证文件路径"), "invoice_file", P("string", "发票文件路径"), "note", P("string", "备注/依据")), "project_id", "dir", "amount"),
+            Fn("remove_record", "提交删除一条错误或重复的合同 / 收支记录，等用户确认。", Props(
+                "project_id", P("string", "项目编号"), "type", P("string", "contract 或 payment"),
+                "kind", P("string", "合同类型（删合同时）"), "date", P("string", "日期（删收支时）"), "amount", P("number", "金额（删收支时）"), "reason", P("string", "为什么删")), "project_id", "type", "reason"),
             Fn("edit_word", "修改一份 Word（.doc/.docx）的副本：把原文里的文字替换成新文字（原文件不动）。", Props(
                 "path", P("string", "原文件完整路径"),
                 "replacements", Arr("替换", Obj(Props("find", P("string", "原文里要找的文字（要和原文完全一致）"), "replace", P("string", "换成的文字")))),
@@ -180,7 +199,8 @@ namespace DangAn
                         if (p == null) p = st.RealProjects.FirstOrDefault(x => x.Name.Contains(S(a, "project_id")));
                         if (p == null) return "没有这个项目编号。先用 list_projects 查看。";
                         Tool("查看项目：" + p.Name);
-                        return AiFiller.Dossier(st, p, new AiPlan(), 10000);
+                        return AiFiller.Dossier(st, p, new AiPlan(), 10000)
+                            + "\n—— 关键信息栏目（含空栏，set_project_info 用这些名称） ——\n" + string.Join("、", p.Fields.Select(f => f.Name + (string.IsNullOrWhiteSpace(f.Value) ? "（空）" : "")));
                     }
                 case "search_archive":
                     {
@@ -203,6 +223,10 @@ namespace DangAn
                     }
                 case "create_excel": return CreateExcel(a);
                 case "edit_word": return EditWord(a);
+                case "set_project_info": return ArchiveEdits.SetInfo(st, this, a);
+                case "upsert_contract": return ArchiveEdits.UpsertContract(st, this, a);
+                case "add_payment": return ArchiveEdits.AddPayment(st, this, a);
+                case "remove_record": return ArchiveEdits.Remove(st, this, a);
             }
             return "没有这个工具：" + name;
         }

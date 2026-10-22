@@ -16,6 +16,7 @@ namespace DangAn
         AiChat chat;
         RichTextBox view; TextBox input; Button send; Label status; ComboBox modelBox; bool modelLoading;
         FlowLayoutPanel attachRow, outRow, tips;
+        Panel pendPanel; CheckedListBox pendList; Label pendTitle; string noteForAi = "";
         readonly List<string> attachments = new List<string>();
         bool busy;
         public string Crumb { get { return "项目档案室  ›  AI 助手"; } }
@@ -53,6 +54,17 @@ namespace DangAn
                 tips.Controls.Add(b);
             }
             viewCard.Controls.Add(tips);
+
+            // AI 提交的档案修改：确认后才写入
+            pendPanel = new Panel { Dock = DockStyle.Bottom, Height = Ui.S(200), Visible = false, BackColor = Color.FromArgb(255, 250, 235), Padding = new Padding(Ui.S(10), Ui.S(6), Ui.S(10), Ui.S(6)) };
+            pendTitle = Ui.Lbl("", 10f, true, Ui.Orange); pendTitle.Dock = DockStyle.Top; pendTitle.AutoSize = false; pendTitle.Height = Ui.S(28);
+            pendList = new CheckedListBox { Dock = DockStyle.Fill, CheckOnClick = true, IntegralHeight = false, BorderStyle = BorderStyle.None, BackColor = Color.FromArgb(255, 250, 235), Font = Ui.F(9.5f), HorizontalScrollbar = true };
+            var pr = Ui.Row(); pr.Dock = DockStyle.Bottom; pr.Height = Ui.S(44);
+            var bOk = Ui.Btn("确认写入所选", true, "check"); bOk.Click += (s, e) => ApplyPending();
+            var bNo = Ui.Btn("全部放弃", false); bNo.Click += (s, e) => DropPending();
+            pr.Controls.AddRange(new Control[] { bOk, bNo, Ui.Lbl("写入后在项目页的关键信息、合同台账、财务里都能看到，也可以再改。", 8.5f, false, Ui.Sub) });
+            pendPanel.Controls.Add(pendList); pendPanel.Controls.Add(pr); pendPanel.Controls.Add(pendTitle);
+            viewCard.Controls.Add(pendPanel);
 
             outRow = new FlowLayoutPanel { Height = Ui.S(34), Dock = DockStyle.Bottom, Visible = false, BackColor = Ui.Bg, WrapContents = false, AutoScroll = true, Padding = new Padding(0, Ui.S(6), 0, 0) };
             attachRow = new FlowLayoutPanel { Height = Ui.S(34), Dock = DockStyle.Top, Visible = false, BackColor = Color.White, WrapContents = false, AutoScroll = true };
@@ -140,6 +152,7 @@ namespace DangAn
         {
             if (busy) return;
             chat = new AiChat(St);
+            if (pendPanel != null) { pendPanel.Visible = false; pendList.Items.Clear(); }
             chat.OnTool = s => OnUi(() => Line("　· " + s, Ui.Sub, 9f, false));
             chat.OnOutput = p => OnUi(() => AddOutput(p));
             view.Clear(); attachments.Clear(); RefreshAttach();
@@ -220,6 +233,47 @@ namespace DangAn
             attachRow.Visible = attachments.Count > 0;
         }
 
+        /// <summary>其他页面让 AI 助手做事（如项目页“AI 核对补全”）。</summary>
+        public void Ask(string text)
+        {
+            if (busy) { Ui.Info("AI 助手还在处理上一件事，稍等再试。"); return; }
+            input.Text = text; Send();
+        }
+
+        void ShowPending()
+        {
+            pendList.Items.Clear();
+            foreach (var c in chat.Pending) pendList.Items.Add(c, c.Use);
+            pendPanel.Visible = chat.Pending.Count > 0;
+            pendPanel.Height = Ui.S(Math.Min(320, 90 + chat.Pending.Count * 24));
+            pendTitle.Text = "AI 提交了 " + chat.Pending.Count + " 条档案修改，请核对：勾选的点“确认写入”才会生效";
+        }
+
+        void ApplyPending()
+        {
+            int ok = 0, bad = 0, skip = 0; var done = new List<string>();
+            for (int i = 0; i < pendList.Items.Count; i++)
+            {
+                var c = (PendingChange)pendList.Items[i];
+                if (!pendList.GetItemChecked(i)) { skip++; continue; }
+                try { c.Apply(); ok++; done.Add(c.Area + "｜" + c.Desc); }
+                catch (Exception ex) { bad++; Line("　× 没写成：" + c.Desc + "（" + ex.Message + "）", Ui.Red, 9f, false); }
+            }
+            St.Save();
+            Line("　✓ 已写入档案库 " + ok + " 条" + (skip > 0 ? "，放弃 " + skip + " 条" : "") + (bad > 0 ? "，失败 " + bad + " 条" : ""), Ui.Green, 9.5f, true);
+            foreach (var d in done) Line("　　" + AiClient.Cut(d, 120), Ui.Green, 9f, false);
+            noteForAi = "（系统提示：你上次提交的档案修改，用户已确认写入 " + ok + " 条" + (skip > 0 ? "、放弃 " + skip + " 条" : "") + "。）\n";
+            chat.Pending.Clear(); pendPanel.Visible = false;
+            m.ReloadAll();
+        }
+
+        void DropPending()
+        {
+            Line("　已放弃 AI 提交的 " + chat.Pending.Count + " 条修改，档案库没有改动。", Ui.Sub, 9f, false);
+            noteForAi = "（系统提示：你上次提交的 " + chat.Pending.Count + " 条档案修改，用户全部放弃了。）\n";
+            chat.Pending.Clear(); pendPanel.Visible = false;
+        }
+
         void AddOutput(string path)
         {
             if (!outRow.Visible) { outRow.Controls.Add(Ui.Lbl("生成的文件：", 9f, true, Ui.Text)); outRow.Visible = true; }
@@ -243,6 +297,7 @@ namespace DangAn
                 if (!cfg.Ready) return;
             }
             if (text == "") text = "请看看附件，告诉我里面是什么，需要怎么处理。";
+            string sendText = noteForAi + text; noteForAi = "";
             var atts = attachments.ToList();
             tips.Visible = false;
             Line("你", Ui.Blue, 9.5f, true);
@@ -257,13 +312,14 @@ namespace DangAn
             var th = new Thread(() =>
             {
                 string reply = null, err = null;
-                try { reply = chat.Send(cfg, text, atts); }
+                try { reply = chat.Send(cfg, sendText, atts); }
                 catch (Exception ex) { err = ex is AiException ? ex.Message : ex.GetType().Name + "：" + ex.Message; }
                 OnUi(() =>
                 {
                     busy = false; send.Enabled = true;
                     if (err != null) Line("出错了：" + err, Ui.Red, 10f, false);
                     else Answer(reply);
+                    ShowPending();
                     Line("", Ui.Text, 6f, false);
                     UpdateStatus();
                     status.Text += "　（上一条用时 " + (int)(DateTime.Now - t0).TotalSeconds + " 秒）";
