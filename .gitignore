@@ -1,0 +1,13 @@
+﻿# 只上传软件源码；档案数据、测试程序、编译产物都不上传
+/*
+!/src/
+!/setup/
+!/build/
+!/build.ps1
+!/README.md
+!/.gitignore
+!/.gitattributes
+/build/*
+!/build/app.manifest
+!/build/IconGen.cs
+!/build/合同预览模板.html
