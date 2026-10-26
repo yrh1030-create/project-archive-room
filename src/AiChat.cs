@@ -55,6 +55,7 @@ namespace DangAn
                 + "2. 项目登记信息、合同台账是手工登记的，可能有误；与合同、通知书等原文冲突时以原文为准，金额以大写为准，并提醒用户。\n"
                 + "3. 用户上传的附件用 read_file 读取。要用档案把上级发来的 Excel 表填好，用 fill_excel_from_archive；按用户要求改 Excel 的个别格子，用 write_excel。\n"
                 + "   fill_excel_from_archive 填好的结果就是最终结果，不要再用 write_excel 往这张表追加或改写，除非用户明确提出要改哪几格。\n"
+                + "   用户要把某个项目的资料整理好给上级查阅、报送时，用 export_project_files 导出按分类的资料包。\n"
                 + "4. 要写材料（情况说明、报告、函、通知等），用 create_word 生成 Word；要列清单、汇总，用 create_excel 生成 Excel；修改用户的 Word，用 edit_word。\n"
                 + "5. 生成、修改的都是新文件，原文件不动。完成后告诉用户文件名和主要内容。\n"
                 + "6. 只有发票不等于已付款：说“已支付”必须有记账凭证、国库支付凭证、银行回单等付款依据，否则只能说“已开票”或“已报账申请”。\n"
@@ -150,6 +151,10 @@ namespace DangAn
             Fn("create_excel", "生成一张 Excel 表（.xlsx）。", Props(
                 "file_name", P("string", "文件名"), "sheet_name", P("string", "工作表名"),
                 "headers", Arr("表头", P("string", "")), "rows", Arr("数据行，每行是字符串数组", Arr("", P("string", "")))), "file_name", "headers", "rows"),
+            Fn("export_project_files", "导出一个项目的资料包给上级查阅：按分类建文件夹（01 立项及计划、04 合同协议……）复制资料，附资料目录 Excel 和项目基本情况 Word，可打 zip。", Props(
+                "project_id", P("string", "项目编号"),
+                "categories", Arr("只导出这些分类（可省略=全部），用分类名或关键字，如 合同、资金支付、验收", P("string", "")),
+                "zip", P("boolean", "是否打包 zip，默认是")), "project_id"),
             Fn("set_project_info", "提交对项目关键信息（登记栏目）的补充或更正，等用户确认后写入。栏目名用 project_detail 里列出的名称。", Props(
                 "project_id", P("string", "项目编号"),
                 "fields", Arr("要改的栏目", Obj(Props("name", P("string", "栏目名，如 施工合同／成交金额"), "value", P("string", "新内容"), "source", P("string", "依据：文件名 + 原文摘录"))))), "project_id", "fields"),
@@ -224,6 +229,7 @@ namespace DangAn
                 case "create_excel": return CreateExcel(a);
                 case "edit_word": return EditWord(a);
                 case "set_project_info": return ArchiveEdits.SetInfo(st, this, a);
+                case "export_project_files": return ExportPack(a);
                 case "upsert_contract": return ArchiveEdits.UpsertContract(st, this, a);
                 case "add_payment": return ArchiveEdits.AddPayment(st, this, a);
                 case "remove_record": return ArchiveEdits.Remove(st, this, a);
@@ -300,6 +306,27 @@ namespace DangAn
             if (string.IsNullOrWhiteSpace(text)) return "这个文件没有读出文字（可能是图片太模糊，或格式不支持）。";
             text = text.Replace("\r\n", "\n").Replace('\r', '\n');
             return "〔" + Path.GetFileName(full) + "，共 " + text.Length + " 字〕\n" + (text.Length > max ? text.Substring(0, max) + "\n……（后面还有 " + (text.Length - max) + " 字）" : text);
+        }
+
+        string ExportPack(Dictionary<string, object> a)
+        {
+            string id = S(a, "project_id");
+            var p = st.Proj(id) ?? st.RealProjects.FirstOrDefault(x => id != "" && x.Name.Contains(id));
+            if (p == null || p.IsRoot) return "没有这个项目：" + id;
+            List<string> cats = null;
+            object co;
+            if (a.TryGetValue("categories", out co) && co is object[] && ((object[])co).Length > 0)
+            {
+                var want = ((object[])co).Select(x => Convert.ToString(x).Trim()).Where(x => x != "").ToList();
+                cats = Cats.All.Where(c => want.Any(w => Cats.Title(c).Contains(w) || c.Contains(w) || w.Contains(Cats.Short(c)))).ToList();
+                if (cats.Count == 0) return "没有对上的分类。可用的分类：" + string.Join("、", Cats.All.Select(Cats.Title));
+            }
+            bool zip = !a.ContainsKey("zip") || Convert.ToString(a["zip"]).ToLowerInvariant() != "false";
+            Tool("导出资料包：" + p.Name + (cats == null ? "（全部分类）" : "（" + string.Join("、", cats.Select(Cats.Short)) + "）"));
+            var r = ProjectExport.Run(st, p, OutDir, cats, zip, null);
+            Output(r.Zip ?? r.Folder);
+            return "已导出 " + r.Files + " 份资料（" + Ui.Size(r.Bytes) + "）到：" + r.Folder + (r.Zip != null ? "\n压缩包：" + r.Zip : "") + (r.Skipped > 0 ? "\n重复副本 " + r.Skipped + " 份未重复放" : "")
+                + "\n内含按分类的文件夹、资料目录.xlsx、项目基本情况.docx。";
         }
 
         string WriteExcel(Dictionary<string, object> a)

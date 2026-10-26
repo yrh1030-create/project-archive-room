@@ -44,6 +44,16 @@ namespace DangAn
             return b;
         }
 
+        /// <summary>带下拉菜单的按钮：点一下在按钮下方弹出菜单。items 依次为“菜单文字, 动作”。</summary>
+        public static Button MenuBtn(string text, bool primary, string icon, params object[] items)
+        {
+            var b = Btn(text + " ▾", primary, icon);
+            var menu = new ContextMenuStrip { Font = F(9.5f) };
+            for (int i = 0; i + 1 < items.Length; i += 2) { var act = (Action)items[i + 1]; menu.Items.Add((string)items[i], null, (s, e) => act()); }
+            b.Click += (s, e) => menu.Show(b, new Point(0, b.Height));
+            return b;
+        }
+
         public static Button SoftBtn(string text) { return SoftBtn(text, null); }
 
         public static Button SoftBtn(string text, string icon)

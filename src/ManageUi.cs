@@ -224,4 +224,86 @@ namespace DangAn
             }
         }
     }
+    /// <summary>名字相同（去掉“188号--”这类编号、地区前缀后）的项目，一键合并。</summary>
+    public static class DupMergeDialog
+    {
+        public static bool Show(MainForm m)
+        {
+            var st = m.St;
+            var groups = ProjectOps.DuplicateGroups(st);
+            if (groups.Count == 0) { Ui.Info("没有发现重名项目。"); return false; }
+            using (var f = new Form { Text = "合并重名项目", ShowIcon = false, ShowInTaskbar = false, MinimizeBox = false, MaximizeBox = false, StartPosition = FormStartPosition.CenterParent, Font = Ui.F(9.5f), ClientSize = new Size(Ui.S(820), Ui.S(420)), BackColor = Color.White })
+            {
+                var tip = new Label { Text = "下面每一行是同一个项目被分成了几个（如“188号--慧谷湖……”和“慧谷湖……”）。勾选的合并成一个：保留编号最小的那个项目的名称、合同和信息，文件夹都归到它下面，文件本身不动。", Dock = DockStyle.Top, Height = Ui.S(56), Padding = new Padding(Ui.S(10), Ui.S(10), Ui.S(10), 0) };
+                var cl = new CheckedListBox { Dock = DockStyle.Fill, CheckOnClick = true, IntegralHeight = false, BorderStyle = BorderStyle.None, HorizontalScrollbar = true };
+                foreach (var g in groups)
+                {
+                    var keep = g.OrderBy(p => p.Id).First();
+                    cl.Items.Add(new KeyValuePair<Project, List<Project>>(keep, g), true);
+                }
+                cl.Format += (s, e) =>
+                {
+                    var kv = (KeyValuePair<Project, List<Project>>)e.ListItem;
+                    e.Value = "保留 " + kv.Key.Id + "「" + kv.Key.Name + "」 ← 并入 " + string.Join("、", kv.Value.Where(p => p != kv.Key).Select(p => p.Id + "「" + p.Name + "」"));
+                };
+                var row = Ui.Row(); row.Dock = DockStyle.Bottom; row.Height = Ui.S(52); row.Padding = new Padding(Ui.S(10), Ui.S(8), 0, 0);
+                var ok = Ui.Btn("合并所选", true, "check"); ok.Click += (s, e) => f.DialogResult = DialogResult.OK;
+                var cancel = Ui.Btn("取消", false); cancel.Click += (s, e) => f.DialogResult = DialogResult.Cancel;
+                row.Controls.AddRange(new Control[] { ok, cancel });
+                f.Controls.Add(cl); f.Controls.Add(row); f.Controls.Add(tip);
+                if (f.ShowDialog(m) != DialogResult.OK || cl.CheckedItems.Count == 0) return false;
+                int n = 0;
+                foreach (KeyValuePair<Project, List<Project>> kv in cl.CheckedItems) { ProjectOps.MergeInto(st, kv.Value, kv.Key.Name); n++; }
+                m.SetStatus("已合并 " + n + " 组重名项目");
+                return true;
+            }
+        }
+    }
+
+    /// <summary>导出项目资料包：选分类、是否打 zip、导出位置。</summary>
+    public static class ExportPackDialog
+    {
+        public static void Show(IWin32Window owner, MainForm m, Project p)
+        {
+            var st = m.St;
+            var info = st.Info(p);
+            using (var f = new Form { Text = "导出资料包 — " + p.Name, ShowIcon = false, ShowInTaskbar = false, MinimizeBox = false, MaximizeBox = false, StartPosition = FormStartPosition.CenterParent, Font = Ui.F(9.5f), ClientSize = new Size(Ui.S(560), Ui.S(470)), BackColor = Color.White })
+            {
+                var tip = new Label { Text = "按分类建文件夹放资料（01 立项及计划、04 合同协议……），附《资料目录.xlsx》和《项目基本情况.docx》，方便交给上级查阅。原文件不动。", Dock = DockStyle.Top, Height = Ui.S(52), Padding = new Padding(Ui.S(10), Ui.S(10), Ui.S(10), 0) };
+                var cl = new CheckedListBox { Dock = DockStyle.Fill, CheckOnClick = true, IntegralHeight = false, BorderStyle = BorderStyle.None };
+                foreach (var c in Cats.All) { int k; if (info.CatCount.TryGetValue(c, out k) && k > 0) cl.Items.Add(new KeyValuePair<string, int>(c, k), true); }
+                cl.Format += (s, e) => { var kv = (KeyValuePair<string, int>)e.ListItem; e.Value = Cats.Title(kv.Key) + "（" + kv.Value + " 份）"; };
+                var zip = new CheckBox { Text = "同时打包成 zip（方便发微信、邮件）", Checked = true, Dock = DockStyle.Bottom, Height = Ui.S(32), Padding = new Padding(Ui.S(10), 0, 0, 0) };
+                var row = Ui.Row(); row.Dock = DockStyle.Bottom; row.Height = Ui.S(52); row.Padding = new Padding(Ui.S(10), Ui.S(8), 0, 0);
+                var ok = Ui.Btn("选择位置并导出", true, "box"); ok.Click += (s, e) => f.DialogResult = DialogResult.OK;
+                var cancel = Ui.Btn("取消", false); cancel.Click += (s, e) => f.DialogResult = DialogResult.Cancel;
+                row.Controls.AddRange(new Control[] { ok, cancel });
+                f.Controls.Add(cl); f.Controls.Add(zip); f.Controls.Add(row); f.Controls.Add(tip);
+                if (f.ShowDialog(owner) != DialogResult.OK || cl.CheckedItems.Count == 0) return;
+                var cats = cl.CheckedItems.Cast<KeyValuePair<string, int>>().Select(kv => kv.Key).ToList();
+                if (cats.Count == cl.Items.Count) cats = null;
+                bool z = zip.Checked;
+                string outParent;
+                using (var d = new FolderBrowserDialog { Description = "选择导出位置（会在里面新建“项目名_资料汇编_日期”文件夹）", SelectedPath = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory) })
+                {
+                    if (d.ShowDialog(owner) != DialogResult.OK) return;
+                    outParent = d.SelectedPath;
+                }
+                m.SetStatus("正在导出资料包……");
+                var th = new System.Threading.Thread(() =>
+                {
+                    ProjectExport.Result r = null; string err = null;
+                    try { r = ProjectExport.Run(st, p, outParent, cats, z, m.SetStatus); } catch (Exception ex) { err = ex.Message; }
+                    m.BeginInvoke(new Action(() =>
+                    {
+                        if (err != null) { m.SetStatus("导出失败：" + err); Ui.Info("导出失败：" + err); return; }
+                        m.SetStatus("资料包已导出：" + r.Files + " 份");
+                        if (Ui.Ask("已导出 " + r.Files + " 份资料（" + Ui.Size(r.Bytes) + "）" + (r.Skipped > 0 ? "，重复副本 " + r.Skipped + " 份没有重复放" : "") + "：\n" + r.Folder + (r.Zip != null ? "\n压缩包：" + r.Zip : "") + (r.Log.Count > 0 ? "\n\n" + string.Join("\n", r.Log.Take(5)) : "") + "\n\n现在打开所在文件夹吗？"))
+                            Ui.Reveal(r.Zip ?? r.Folder);
+                    }));
+                });
+                th.IsBackground = true; th.Start();
+            }
+        }
+    }
 }

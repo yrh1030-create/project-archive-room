@@ -52,11 +52,10 @@ namespace DangAn
             type.SelectedIndexChanged += (s, e) => { if (!loading) { Commit(); } };
             stage.SelectedIndexChanged += (s, e) => { if (!loading) { Commit(); Reload(); } };
             var openDir = Ui.SoftBtn("打开项目文件夹", "open"); openDir.Click += (s, e) => { if (p.Folders.Count > 0) Ui.Reveal(Path.Combine(St.Lib.Root, p.Folders[0])); };
-            var addFile = Ui.SoftBtn("添加资料", "plus"); addFile.Click += (s, e) => AddFiles();
             var delProj = (RoundButton)Ui.Btn("删除项目", false); delProj.Style = RoundButton.Kind.Ghost; delProj.TextColor = Ui.Red;
             delProj.Click += (s, e) => { Commit(); if (DeleteProjectDialog.Show(this, St, new List<Project> { P })) m.ShowPage("项目总览"); };
             delProj.Visible = !p.IsRoot;
-            row.Controls.AddRange(new Control[] { L("档号"), code, L("类型"), type, L("办理进展"), stage, openDir, addFile, delProj });
+            row.Controls.AddRange(new Control[] { L("档号"), code, L("类型"), type, L("办理进展"), stage, openDir, delProj });
             if (p.IsRoot) { code.Enabled = type.Enabled = stage.Enabled = false; }
             // 跳转条
             var anchorRow = Ui.Row(); anchorRow.Location = new Point(-Ui.S(4), Ui.S(130));
@@ -321,8 +320,12 @@ namespace DangAn
 
         Label finStats; Panel finBar;
 
+        /// <summary>重建某个区块前，把要复用的控件先摘下来，免得被一起销毁。</summary>
+        static void Keep(params Control[] cs) { foreach (var k in cs) if (k != null && k.Parent != null) k.Parent.Controls.Remove(k); }
+
         void FillFinance()
         {
+            Keep(payGrid);
             Clear(secFinance);
             var add = Ui.Btn("记一笔", false);
             add.Click += (s, e) =>
@@ -332,16 +335,16 @@ namespace DangAn
                 var row = payGrid.Rows.Cast<DataGridViewRow>().FirstOrDefault(r => r.Tag == pay);
                 if (row != null) { payGrid.CurrentCell = row.Cells[PC_SUM]; payGrid.BeginEdit(true); }
             };
-            var imp = Ui.Btn("导入明细表", false);
-            imp.Click += (s, e) =>
+            Action imp = () =>
             {
                 int n = Finance.Import(St, P); St.Save(); FillFinance();
-                Ui.Info(n > 0 ? "已从本项目的收入/支出明细表导入 " + n + " 笔，并自动关联了合同、凭证和发票。\n手工记的笔数和手工关联的文件都已保留。" : "本项目里没有找到“支出明细表 / 收入明细表”（Excel）。可以点“记一笔”手工录入。");
+                Ui.Info(n > 0 ? "已从本项目的收入/支出明细表导入 " + n + " 笔，并自动关联了合同、凭证和发票。\n手工记的笔数、AI 整理的笔数和手工关联的文件都已保留。" : "本项目里没有找到“支出明细表 / 收入明细表”（Excel）。可以点“AI 整理合同收支”或“记一笔”。");
             };
-            var ex = Ui.Btn("导出", false);
-            ex.Click += (s, e) => Exports.Payments(this, St, P);
-            var split = Ui.Btn("拆分发票", false);
-            split.Click += (s, e) => SplitInvoices((Button)s);
+            Button moreBtn = null;
+            moreBtn = Ui.MenuBtn("更多", false, null,
+                "从“支出明细表 / 收入明细表”导入", imp,
+                "从合同、凭证扫描件里拆分发票", (Action)(() => SplitInvoices(moreBtn)),
+                "导出收支明细（Excel）", (Action)(() => Exports.Payments(this, St, P)));
             var addInv = Ui.Btn("添加发票", false, "plus");
             addInv.Click += (s, e) =>
             {
@@ -350,7 +353,7 @@ namespace DangAn
             };
             var aiFin = Ui.Btn("AI 整理合同收支", true, "coin");
             aiFin.Click += (s, e) => { Commit(); if (AiFinanceForm.Run(this, St, P)) Reload(); };
-            secFinance.Controls.Add(SectionHead("财务", "", aiFin, add, addInv, imp, split, ex));
+            secFinance.Controls.Add(SectionHead("财务", "", aiFin, add, addInv, moreBtn));
 
             var sm = Finance.Sum(St, P);
             var tiles = new TableLayoutPanel { Height = Ui.S(88), ColumnCount = 7, RowCount = 1, BackColor = Color.White, Margin = new Padding(0, 0, 0, Ui.S(10)) };
@@ -526,18 +529,18 @@ namespace DangAn
         // ---------- 合同台账
         void FillContracts()
         {
+            Keep(conGrid, conTotal);
             Clear(secContracts);
             var add = Ui.Btn("添加合同", false, "plus");
             add.Click += (s, e) => { conGrid.Rows.Add("施工合同", "", 0.0, DateTime.Today.ToString("yyyy-MM-dd"), 0.0, 0.0, "", "", "", ""); CommitContracts(); St.Save(); FitGrid(); UpdateConTotal(); conGrid.CurrentCell = conGrid.Rows[conGrid.Rows.Count - 1].Cells[1]; conGrid.BeginEdit(true); };
             var del = Ui.Btn("删除选中", false);
             del.Click += (s, e) => { if (conGrid.CurrentRow != null && Ui.Ask("删除这一份合同记录？")) { conGrid.Rows.Remove(conGrid.CurrentRow); CommitContracts(); St.Save(); FitGrid(); UpdateConTotal(); } };
-            var ex = Ui.Btn("导出 Excel", false, "excel");
-            ex.Click += (s, e) => Exports.Contracts(this, St, new[] { P }, "合同台账_" + P.Code);
-            var pdfx = Ui.Btn("导出合同PDF", false, "contract");
-            pdfx.Click += (s, e) => { Commit(); m.ExportContractPdfs(new List<Project> { P }, P.Name + " 经济合同 PDF"); };
-            var aiCon = Ui.Btn("AI 整理", true, "coin");
-            aiCon.Click += (s, e) => { Commit(); if (AiFinanceForm.Run(this, St, P)) Reload(); };
-            secContracts.Controls.Add(SectionHead("合同台账", "单元格可直接修改；双击“来源文件”打开原件", aiCon, add, del, ex, pdfx));
+            Action ex = () => Exports.Contracts(this, St, new[] { P }, "合同台账_" + P.Code);
+            Action pdfx = () => { Commit(); m.ExportContractPdfs(new List<Project> { P }, P.Name + " 经济合同 PDF"); };
+            var exp = Ui.MenuBtn("导出", false, "excel",
+                "合同台账（Excel）", ex,
+                "经济合同 PDF 包", pdfx);
+            secContracts.Controls.Add(SectionHead("合同台账", "单元格可直接修改", add, del, exp));
             var tp = new Panel { Height = Ui.S(30), BackColor = Color.White }; conTotal.Location = new Point(0, Ui.S(4)); tp.Controls.Add(conTotal);
             secContracts.Controls.Add(tp);
             conGrid.Rows.Clear();
@@ -580,12 +583,15 @@ namespace DangAn
         // ---------- 全部资料
         void FillFilesSection(ProjectInfo info)
         {
+            Keep(filesBox, chipRow, fileSearch);
             Clear(secFiles);
             var add = Ui.Btn("添加资料", false, "plus"); add.Click += (s, e) => AddFiles();
             int hiddenN = P.IsRoot ? 0 : St.HiddenOf(P).Count;
             var restore = Ui.Btn("恢复已移除的（" + hiddenN + "）", false, "refresh"); restore.Visible = hiddenN > 0;
             restore.Click += (s, e) => RestoreHidden();
-            secFiles.Controls.Add(SectionHead("全部资料", info.FileCount + " 份 · 单击文件打开，右键可改分类；每一类右边可直接添加", restore, add));
+            var pack = Ui.Btn("导出资料包", false, "box"); pack.Click += (s, e) => { Commit(); ExportPackDialog.Show(this, m, P); };
+            pack.Visible = !P.IsRoot;
+            secFiles.Controls.Add(SectionHead("全部资料", info.FileCount + " 份 · 单击文件打开，右键可改分类；每一类右边可直接添加", restore, pack, add));
             var filter = new Panel { Height = Ui.S(46), BackColor = Color.White, Margin = new Padding(0, 0, 0, Ui.S(10)) };
             chipRow.Dock = DockStyle.None; fileSearch.Dock = DockStyle.None;
             filter.Controls.Add(chipRow); filter.Controls.Add(fileSearch);
@@ -722,6 +728,7 @@ namespace DangAn
         // ---------- 备注
         void FillNote()
         {
+            Keep(note);
             Clear(secNote);
             secNote.Controls.Add(SectionHead("备注", "随手记：待办、联系人、特殊情况…"));
             note.Text = P.Note;

@@ -352,18 +352,9 @@ namespace DangAn
                 St.Lib.Excludes = excl.Text.Split(new[] { ',', '，', ';', '；' }, StringSplitOptions.RemoveEmptyEntries).Select(x => x.Trim()).Where(x => x.Length > 0).ToList();
                 m.Rescan();
             };
-            var bOcr = Ui.Btn("识别扫描件文字", false); bOcr.Click += (s, e) => m.StartOcr();
             var bRetry = Ui.Btn("重新识别以前失败的文件", false);
             bRetry.Click += (s, e) => { lock (St.Sync) St.Lib.TextTried.Clear(); m.StartOcr(); };
-            var bHidden = Ui.Btn("恢复从项目里移除的文件", false);
-            bHidden.Click += (s, e) =>
-            {
-                int n = St.Lib.Hidden.Count;
-                if (n == 0) { Ui.Info("没有被移除的文件。"); return; }
-                if (!Ui.Ask("有 " + n + " 份文件之前从项目里移除了（文件还在）。全部恢复显示？")) return;
-                St.Lib.Hidden.Clear(); m.Rescan();
-            };
-            r2.Controls.AddRange(new Control[] { bSave, bOcr, bRetry, bHidden, Ui.Lbl("识别用 Windows 自带的中文 OCR；老版 .doc/.xls 需本机装有 Office 或 WPS。", 8.5f, false, Ui.Sub) });
+            r2.Controls.AddRange(new Control[] { bSave, bRetry, Ui.Lbl("识别用 Windows 自带的中文 OCR；老版 .doc/.xls 需本机装有 Office 或 WPS。", 8.5f, false, Ui.Sub) });
             scan.Controls.AddRange(new Control[] { st, sl, excl, r2 });
 
             // 项目管理

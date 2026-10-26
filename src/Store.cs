@@ -280,11 +280,19 @@ namespace DangAn
                 host.Folders.Add(top);
                 return host;
             }
-            var np = new Project { Id = NewProjectId(), Name = top, Type = GuessType(top) };
+            // 去掉“188号--”这类编号、地区前缀后与已有项目同名：是同一个项目的另一个文件夹
+            string key = FolderNames.Key(top);
+            if (key.Length >= 4)
+            {
+                var same = Lib.Projects.FirstOrDefault(p => !p.IsRoot && (FolderNames.Key(p.Name) == key || p.Folders.Any(f => FolderNames.Key(f) == key)));
+                if (same != null) { same.Folders.Add(top); return same; }
+            }
+            string pname = FolderNames.CleanName(top);   // “188号--某某工程”→“某某工程”
+            var np = new Project { Id = NewProjectId(), Name = pname, Type = GuessType(pname) };
             np.Folders.Add(top);
             np.Required = DefaultRequired(np.Type);
             np.Code = np.Id;
-            np.Fields.Add(new Field("项目名称", top, "文件夹名称"));
+            np.Fields.Add(new Field("项目名称", pname, "文件夹名称"));
             Lib.Projects.Add(np);
             return np;
         }

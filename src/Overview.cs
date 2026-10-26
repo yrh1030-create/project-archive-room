@@ -175,15 +175,15 @@ namespace DangAn
             var t1 = Ui.Lbl("我的项目", 20f, true, Ui.Text); t1.Location = new Point(0, 0);
             var t2 = Ui.Lbl("先看每个项目的概况，点卡片进入项目再细查。文件、文件夹、压缩包拖进窗口任意位置即可归档。", 9.5f, false, Ui.Sub); t2.Location = new Point(Ui.S(3), Ui.S(46));
             var hb = Ui.Row(); hb.Dock = DockStyle.Right; hb.Padding = new Padding(0, Ui.S(6), 0, 0);
-            var bOpen = Ui.Btn("打开文件夹", false, "open"); bOpen.Click += (s, e) => Ui.Reveal(St.Lib.Root);
-            var bScan = Ui.Btn("重新扫描", false, "refresh"); bScan.Click += (s, e) => m.Rescan();
-            var bFolder = Ui.Btn("一键导入", false, "folder");
-            bFolder.Click += (s, e) => { using (var d = new FolderBrowserDialog { Description = "选择要导入的文件夹：可以是一个项目文件夹，也可以是装着多个项目文件夹的上级文件夹" }) if (d.ShowDialog(this) == DialogResult.OK) m.BatchImportFolders(new[] { d.SelectedPath }); };
-            var bUp = Ui.Btn("上传资料", true, "upload");
+            var bFolder = Ui.Btn("导入项目文件夹", true, "folder");
+            bFolder.Click += (s, e) => { using (var d = new FolderBrowserDialog { Description = "选择要导入的文件夹：装着多个项目文件夹的上级文件夹（每个子文件夹是一个项目），或者单个项目文件夹" }) if (d.ShowDialog(this) == DialogResult.OK) m.BatchImportFolders(new[] { d.SelectedPath }); };
+            var bUp = Ui.Btn("上传资料", false, "upload");
             bUp.Click += (s, e) => { using (var d = new OpenFileDialog { Multiselect = true, Title = "选择要上传的资料（可多选，压缩包会自动解压）" }) if (d.ShowDialog(this) == DialogResult.OK) m.Import(d.FileNames, null); };
-            var bExp = Ui.Btn("导出合同台账", false, "excel"); bExp.Click += (s, e) => Exports.Contracts(this, St, St.RealProjects, "合同台账");
-            var bPdf = Ui.Btn("导出合同PDF包", false, "contract"); bPdf.Click += (s, e) => m.ExportContractPdfs(St.RealProjects.ToList(), "经济合同 PDF");
-            hb.Controls.AddRange(new Control[] { bOpen, bScan, bExp, bPdf, bFolder, bUp });
+            var bExp = Ui.MenuBtn("导出", false, "excel",
+                "全部项目合同台账（Excel）", (Action)(() => Exports.Contracts(this, St, St.RealProjects, "合同台账")),
+                "全部项目经济合同 PDF 包", (Action)(() => m.ExportContractPdfs(St.RealProjects.ToList(), "经济合同 PDF")),
+                "某个项目的资料包（按分类）…", (Action)(() => { var p = Ui.PickProject(St, "导出哪个项目的资料包？", null); if (p != null && !p.IsRoot) ExportPackDialog.Show(this, m, p); }));
+            hb.Controls.AddRange(new Control[] { bExp, bUp, bFolder });
             head.Controls.AddRange(new Control[] { t1, t2, hb });
 
             // 统计
@@ -223,7 +223,11 @@ namespace DangAn
             search = new SearchBox("搜索项目、施工单位…", 10f) { Width = Ui.S(280), Margin = new Padding(Ui.S(12), 0, 0, 0) };
             search.Box.TextChanged += (s, e) => Reload();
             unlink = (RoundButton)Ui.Btn("一键取消关联", false); unlink.Style = RoundButton.Kind.Ghost; unlink.Margin = new Padding(0, 0, Ui.S(10), 0);
-            unlink.Click += (s, e) => { if (UnlinkDialog.Show(m)) m.ReloadAll(); };
+            unlink.Click += (s, e) =>
+            {
+                if (ProjectOps.LooksMisrecognized(St).Count >= 2) { if (UnlinkDialog.Show(m)) m.ReloadAll(); }
+                else if (DupMergeDialog.Show(m)) m.ReloadAll();
+            };
             right.Controls.AddRange(new Control[] { unlink, sort, search });
             bar.Controls.Add(tabRow); bar.Controls.Add(right);
 
@@ -308,9 +312,11 @@ namespace DangAn
             }
             var shown = list.ToList();
             countLbl.Text = "共 " + shown.Count(p => !p.IsRoot) + " 个";
-            int bad = ProjectOps.LooksMisrecognized(St).Count;
-            unlink.Text = bad >= 2 ? "发现 " + bad + " 个疑似误识别项目 · 一键取消关联" : "一键取消关联";
-            unlink.TextColor = bad >= 2 ? (Color?)Ui.Orange : null;
+            // 只有发现问题时才出现：分类文件夹被当成项目 → 一键取消关联；名字相同（如“188号--慧谷湖…”和“慧谷湖…”）→ 一键合并
+            int bad = ProjectOps.LooksMisrecognized(St).Count, dup = ProjectOps.DuplicateGroups(St).Count;
+            unlink.Text = bad >= 2 ? "发现 " + bad + " 个疑似误识别项目 · 一键取消关联" : dup > 0 ? "发现 " + dup + " 组重名项目 · 一键合并" : "";
+            unlink.TextColor = Ui.Orange;
+            unlink.Visible = bad >= 2 || dup > 0;
             unlink.Invalidate();
 
             cardScroll.AutoScrollPosition = new Point(0, 0);
