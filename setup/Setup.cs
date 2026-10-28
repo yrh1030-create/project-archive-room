@@ -55,7 +55,7 @@ namespace DangAnSetup
                 using (var k = Registry.CurrentUser.OpenSubKey(UninstallKey))
                 {
                     var dir = k == null ? null : k.GetValue("InstallLocation") as string;
-                    if (!string.IsNullOrEmpty(dir) && File.Exists(Path.Combine(dir, ExeName))) return dir;
+                    try { if (!string.IsNullOrEmpty(dir) && File.Exists(Path.Combine(dir, ExeName))) return dir; } catch { }
                 }
             }
             catch { }
@@ -68,9 +68,27 @@ namespace DangAnSetup
             catch { return ""; }
         }
 
-        public static void Install(string dir, bool desktop, string dbDir)
+        /// <summary>这个位置能不能写入（旧版本装在 D 盘等，盘不在、没权限时写不进去）。</summary>
+        public static bool CanWrite(string dir)
         {
-            Directory.CreateDirectory(dir);
+            try
+            {
+                Directory.CreateDirectory(dir);
+                string t = Path.Combine(dir, "~写入测试.tmp");
+                File.WriteAllText(t, "x"); File.Delete(t);
+                return true;
+            }
+            catch { return false; }
+        }
+
+        /// <summary>安装到 dir；dir 写不进去（盘不在、没有权限）时改装到默认位置。返回实际安装的位置。</summary>
+        public static string Install(string dir, bool desktop, string dbDir)
+        {
+            if (string.IsNullOrWhiteSpace(dir) || !CanWrite(dir))
+            {
+                if (!string.Equals(dir, DefaultDir, StringComparison.OrdinalIgnoreCase) && CanWrite(DefaultDir)) dir = DefaultDir;
+                else throw new IOException("无法写入安装位置：" + dir + "\n（磁盘不可用或没有权限，请换一个位置）");
+            }
             foreach (var p in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(ExeName)))
                 try { p.CloseMainWindow(); p.WaitForExit(5000); if (!p.HasExited) p.Kill(); } catch { }
             string exe = Path.Combine(dir, ExeName);
@@ -105,6 +123,7 @@ namespace DangAnSetup
                 k.SetValue("NoRepair", 1, RegistryValueKind.DWord);
                 k.SetValue("EstimatedSize", (int)(new FileInfo(exe).Length / 1024), RegistryValueKind.DWord);
             }
+            return dir;
         }
 
         static void Extract(string res, string target)
@@ -156,6 +175,7 @@ namespace DangAnSetup
         {
             string old = SetupProgram.Existing();
             upgrade = old != null;
+            bool oldBlocked = upgrade && !SetupProgram.CanWrite(old);   // 旧版本所在的盘不可用或没有权限
             Text = (upgrade ? "升级 " : "安装 ") + "项目档案室 " + SetupProgram.Version; Font = new Font("Microsoft YaHei UI", 9.5f); BackColor = Color.White;
             FormBorderStyle = FormBorderStyle.FixedDialog; MaximizeBox = false; StartPosition = FormStartPosition.CenterScreen;
             ClientSize = new Size(S(600), S(450));
@@ -174,14 +194,17 @@ namespace DangAnSetup
             t3.Location = new Point(S(600) - TextRenderer.MeasureText(t3.Text, t3.Font).Width - S(20), S(24));
             banner.Controls.AddRange(new Control[] { t1, t2, t3 });
 
-            var l1 = new Label { Text = upgrade ? "检测到已安装" + (SetupProgram.ExistingVersion() != "" ? "的 " + SetupProgram.ExistingVersion() + " 版" : "的版本") + "，将直接覆盖升级（档案库和设置都保留）：" : "安装位置：", AutoSize = true, Location = new Point(S(24), S(118)), ForeColor = upgrade ? Color.FromArgb(14, 120, 100) : Color.Black };
-            dirBox = new TextBox { Text = upgrade ? old : SetupProgram.DefaultDir, Location = new Point(S(24), S(142)), Width = S(460) };
+            var l1 = new Label { Text = oldBlocked ? "旧版本装在 " + Path.GetPathRoot(old) + "，现在写不进去（盘不可用或没权限），将改装到下面的位置（档案库和设置都保留）：" : upgrade ? "检测到已安装" + (SetupProgram.ExistingVersion() != "" ? "的 " + SetupProgram.ExistingVersion() + " 版" : "的版本") + "，将直接覆盖升级（档案库和设置都保留）：" : "安装位置：", AutoSize = true, MaximumSize = new Size(S(560), 0), Location = new Point(S(24), S(112)), ForeColor = oldBlocked ? Color.FromArgb(194, 100, 8) : upgrade ? Color.FromArgb(14, 120, 100) : Color.Black };
+            dirBox = new TextBox { Text = upgrade && !oldBlocked ? old : SetupProgram.DefaultDir, Location = new Point(S(24), S(142)), Width = S(460) };
             var b1 = new Button { Text = "浏览…", Location = new Point(S(494), S(140)), Width = S(80), Height = S(28) };
             b1.Click += (s, e) => { using (var d = new FolderBrowserDialog()) if (d.ShowDialog(this) == DialogResult.OK) dirBox.Text = Path.Combine(d.SelectedPath, "项目档案室"); };
 
             var l2 = new Label { Text = "档案库位置（已整理好的“项目档案库”文件夹；首次打开会自动连接）：", AutoSize = true, Location = new Point(S(24), S(186)) };
-            string prevDb = upgrade && File.Exists(Path.Combine(old, "默认档案库.txt")) ? File.ReadAllText(Path.Combine(old, "默认档案库.txt"), Encoding.UTF8).Trim() : "";
-            dbBox = new TextBox { Text = prevDb != "" && File.Exists(Path.Combine(prevDb, "档案库.json")) ? prevDb : FindDb(), Location = new Point(S(24), S(210)), Width = S(460) };
+            string prevDb = "";
+            try { if (upgrade && File.Exists(Path.Combine(old, "默认档案库.txt"))) prevDb = File.ReadAllText(Path.Combine(old, "默认档案库.txt"), Encoding.UTF8).Trim(); } catch { }
+            bool prevOk = false;
+            try { prevOk = prevDb != "" && File.Exists(Path.Combine(prevDb, "档案库.json")); } catch { }
+            dbBox = new TextBox { Text = prevOk ? prevDb : FindDb(), Location = new Point(S(24), S(210)), Width = S(460) };
             var b2 = new Button { Text = "浏览…", Location = new Point(S(494), S(208)), Width = S(80), Height = S(28) };
             b2.Click += (s, e) => { using (var d = new FolderBrowserDialog { Description = "选择“项目档案库”文件夹（里面有 档案库.json）" }) if (d.ShowDialog(this) == DialogResult.OK) dbBox.Text = d.SelectedPath; };
             var tip = new Label { Text = "留空也可以：首次打开软件时再选择项目资料文件夹，软件会自动建立档案库。", ForeColor = Color.Gray, AutoSize = true, Location = new Point(S(24), S(240)) };
@@ -205,7 +228,7 @@ namespace DangAnSetup
             // 安装包旁边有“项目档案库”，或默认资料位置
             string here = Path.GetDirectoryName(Application.ExecutablePath);
             foreach (var c in new[] { Path.Combine(here, "项目资料", "项目档案库"), Path.Combine(here, "项目档案库"), Path.Combine(Path.GetDirectoryName(here) ?? here, "项目档案库"), Path.Combine(Directory.GetParent(here) != null && Directory.GetParent(here).Parent != null ? Directory.GetParent(here).Parent.FullName : here, "项目档案库"), @"E:\下载\项目文件\项目档案库" })
-                if (File.Exists(Path.Combine(c, "档案库.json"))) return c;
+                try { if (File.Exists(Path.Combine(c, "档案库.json"))) return c; } catch { }
             return "";
         }
 
@@ -219,13 +242,15 @@ namespace DangAnSetup
             go.Enabled = false; Cursor = Cursors.WaitCursor;
             try
             {
-                SetupProgram.Install(dirBox.Text.Trim(), desk.Checked, db);
+                string want = dirBox.Text.Trim();
+                string used = SetupProgram.Install(want, desk.Checked, db);
                 Cursor = Cursors.Default;
                 MessageBox.Show((upgrade ? "升级完成！已更新为 " : "安装完成！版本 ") + SetupProgram.Version + "。\n\n"
+                    + (!string.Equals(used, want, StringComparison.OrdinalIgnoreCase) ? "原位置 " + want + " 写不进去，已改装到：\n" + used + "\n快捷方式已更新到新位置。\n\n" : "")
                     + (upgrade ? "原来的档案库、项目资料和设置都保留不变。\n" : "")
                     + "开始菜单和桌面上都有“项目档案室”。\n卸载：Windows 设置 → 应用 → 项目档案室。\n\n开发者：" + SetupProgram.Developer,
                     Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
-                if (launch.Checked) Process.Start(Path.Combine(dirBox.Text.Trim(), "项目档案室.exe"));
+                if (launch.Checked) Process.Start(Path.Combine(used, "项目档案室.exe"));
                 Close();
             }
             catch (Exception ex)

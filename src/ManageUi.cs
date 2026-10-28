@@ -306,4 +306,41 @@ namespace DangAn
             }
         }
     }
+
+    /// <summary>查重合并：列出重复的收支、合同，勾选的合并（保留信息最全的一条，其余的内容补进来后删除）。</summary>
+    public static class DedupDialog
+    {
+        public static bool Show(IWin32Window owner, Store st, Project p)
+        {
+            var pays = Dedup.Payments(p); var cons = Dedup.Contracts(p);
+            if (pays.Count + cons.Count == 0) { Ui.Info("没有发现重复的收支或合同记录。"); return false; }
+            using (var f = new Form { Text = "查重合并 — " + p.Name, ShowIcon = false, ShowInTaskbar = false, MinimizeBox = false, StartPosition = FormStartPosition.CenterParent, Font = Ui.F(9.5f), ClientSize = new Size(Ui.S(980), Ui.S(520)), BackColor = Color.White })
+            {
+                var tip = new Label { Text = "下面每一组是同一笔收支 / 同一份合同被登记了多次（常见原因：两张明细表都导入了、AI 和手工各登记了一次）。勾选的合并：保留信息最全的那条，其余几条上有它没有的凭证号、凭证/发票文件等补进来，再删掉其余几条。统计金额会随之更正。", Dock = DockStyle.Top, Height = Ui.S(62), Padding = new Padding(Ui.S(12), Ui.S(10), Ui.S(12), 0) };
+                var cl = new CheckedListBox { Dock = DockStyle.Fill, CheckOnClick = true, IntegralHeight = false, BorderStyle = BorderStyle.None, HorizontalScrollbar = true, Font = Ui.F(9.5f) };
+                var items = new List<object>();
+                foreach (var g in pays) { items.Add(g); cl.Items.Add("【收支】" + g.Why + "　保留：" + Dedup.Desc(g.Keep) + "　删除：" + string.Join("；", g.Drop.Select(Dedup.Desc)), true); }
+                foreach (var g in cons) { items.Add(g); cl.Items.Add("【合同】" + g.Why + "　保留：" + Dedup.Desc(g.Keep) + "　删除：" + string.Join("；", g.Drop.Select(Dedup.Desc)), true); }
+                double extra = pays.Sum(g => g.Drop.Sum(x => x.Dir == "收入" ? 0 : x.Amount));
+                var sum = new Label { Text = "共 " + items.Count + " 组；收支重复多算了 " + extra.ToString("#,##0.00") + " 元支出" + (pays.Any(g => g.Keep.Dir == "收入") ? "（另有收入重复）" : ""), Dock = DockStyle.Bottom, Height = Ui.S(30), ForeColor = Ui.Orange, Padding = new Padding(Ui.S(12), Ui.S(6), 0, 0) };
+                var row = Ui.Row(); row.Dock = DockStyle.Bottom; row.Height = Ui.S(52); row.Padding = new Padding(Ui.S(10), Ui.S(8), 0, 0);
+                var ok = Ui.Btn("合并所选", true, "check"); ok.Click += (s, e) => f.DialogResult = DialogResult.OK;
+                var cancel = Ui.Btn("取消", false); cancel.Click += (s, e) => f.DialogResult = DialogResult.Cancel;
+                row.Controls.AddRange(new Control[] { ok, cancel });
+                f.Controls.Add(cl); f.Controls.Add(sum); f.Controls.Add(row); f.Controls.Add(tip);
+                if (f.ShowDialog(owner) != DialogResult.OK || cl.CheckedItems.Count == 0) return false;
+                int n = 0;
+                for (int i = 0; i < cl.Items.Count; i++)
+                {
+                    if (!cl.GetItemChecked(i)) continue;
+                    var g = items[i];
+                    if (g is Dedup.Group<Payment>) Dedup.Merge(p, (Dedup.Group<Payment>)g); else Dedup.Merge(p, (Dedup.Group<Contract>)g);
+                    n++;
+                }
+                st.Save();
+                Ui.Info("已合并 " + n + " 组重复记录。");
+                return true;
+            }
+        }
+    }
 }

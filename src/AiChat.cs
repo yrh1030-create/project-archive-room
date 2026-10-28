@@ -55,7 +55,8 @@ namespace DangAn
                 + "2. 项目登记信息、合同台账是手工登记的，可能有误；与合同、通知书等原文冲突时以原文为准，金额以大写为准，并提醒用户。\n"
                 + "3. 用户上传的附件用 read_file 读取。要用档案把上级发来的 Excel 表填好，用 fill_excel_from_archive；按用户要求改 Excel 的个别格子，用 write_excel。\n"
                 + "   fill_excel_from_archive 填好的结果就是最终结果，不要再用 write_excel 往这张表追加或改写，除非用户明确提出要改哪几格。\n"
-                + "   用户要把某个项目的资料整理好给上级查阅、报送时，用 export_project_files 导出按分类的资料包。\n"
+                + "   用户要把某个项目的资料整理好给上级查阅、报送时，用 export_project_files 导出按分类的资料包；只要某几份文件（如某几张凭证、某类合同），先 search_archive 找到，再用 collect_files 导出。\n"
+                + "   统计合同金额、支出合计前，先用 dedupe_records 查一下有没有重复登记；有重复就提交合并，并告诉用户统计时已剔除。\n"
                 + "4. 要写材料（情况说明、报告、函、通知等），用 create_word 生成 Word；要列清单、汇总，用 create_excel 生成 Excel；修改用户的 Word，用 edit_word。\n"
                 + "5. 生成、修改的都是新文件，原文件不动。完成后告诉用户文件名和主要内容。\n"
                 + "6. 只有发票不等于已付款：说“已支付”必须有记账凭证、国库支付凭证、银行回单等付款依据，否则只能说“已开票”或“已报账申请”。\n"
@@ -167,6 +168,15 @@ namespace DangAn
                 "project_id", P("string", "项目编号"), "date", P("string", "日期"), "dir", P("string", "支出 或 收入"), "amount", P("number", "金额（元）"),
                 "summary", P("string", "摘要"), "party", P("string", "对方单位"), "contract", P("string", "对应合同类型"), "voucher_no", P("string", "凭证号"),
                 "voucher_file", P("string", "凭证文件路径"), "invoice_file", P("string", "发票文件路径"), "note", P("string", "备注/依据")), "project_id", "dir", "amount"),
+            Fn("dedupe_records", "查出某项目合同台账、收支明细里重复登记的记录（如两张明细表都导入了同一笔），每组提交一条合并（保留信息最全的），等用户确认。统计合同、支出前先用它查重。", Props(
+                "project_id", P("string", "项目编号")), "project_id"),
+            Fn("update_payment", "提交修改已有的一笔收支（按 match_amount + match_date / match_voucher_no 找到它），等用户确认。", Props(
+                "project_id", P("string", "项目编号"), "match_amount", P("number", "这一笔现在的金额"), "match_date", P("string", "这一笔现在的日期"), "match_voucher_no", P("string", "这一笔现在的凭证号（可选）"),
+                "date", P("string", "新日期"), "dir", P("string", "支出/收入"), "amount", P("number", "新金额"), "summary", P("string", "新摘要"), "contract", P("string", "关联合同类型"),
+                "voucher_no", P("string", "凭证号"), "voucher_file", P("string", "凭证文件路径"), "invoice_file", P("string", "发票文件路径"), "note", P("string", "备注"), "reason", P("string", "依据")), "project_id", "match_amount"),
+            Fn("collect_files", "把用户要的档案文件挑出来，复制到一个新文件夹（附文件清单 Excel，可打 zip）。paths 用 search_archive 返回的路径；也可只给 query 按搜索结果挑。", Props(
+                "folder_name", P("string", "新文件夹名，如 龙塘村道路工程_付款凭证"), "paths", Arr("文件路径", P("string", "")),
+                "query", P("string", "按这个词搜（没给 paths 时用）"), "project_id", P("string", "只在这个项目里搜（可选）"), "zip", P("boolean", "是否打 zip，默认否")), "folder_name"),
             Fn("remove_record", "提交删除一条错误或重复的合同 / 收支记录，等用户确认。", Props(
                 "project_id", P("string", "项目编号"), "type", P("string", "contract 或 payment"),
                 "kind", P("string", "合同类型（删合同时）"), "date", P("string", "日期（删收支时）"), "amount", P("number", "金额（删收支时）"), "reason", P("string", "为什么删")), "project_id", "type", "reason"),
@@ -230,6 +240,9 @@ namespace DangAn
                 case "edit_word": return EditWord(a);
                 case "set_project_info": return ArchiveEdits.SetInfo(st, this, a);
                 case "export_project_files": return ExportPack(a);
+                case "dedupe_records": return ArchiveEdits.Dedupe(st, this, a);
+                case "update_payment": return ArchiveEdits.UpdatePayment(st, this, a);
+                case "collect_files": return Collect(a);
                 case "upsert_contract": return ArchiveEdits.UpsertContract(st, this, a);
                 case "add_payment": return ArchiveEdits.AddPayment(st, this, a);
                 case "remove_record": return ArchiveEdits.Remove(st, this, a);
@@ -306,6 +319,42 @@ namespace DangAn
             if (string.IsNullOrWhiteSpace(text)) return "这个文件没有读出文字（可能是图片太模糊，或格式不支持）。";
             text = text.Replace("\r\n", "\n").Replace('\r', '\n');
             return "〔" + Path.GetFileName(full) + "，共 " + text.Length + " 字〕\n" + (text.Length > max ? text.Substring(0, max) + "\n……（后面还有 " + (text.Length - max) + " 字）" : text);
+        }
+
+        string Collect(Dictionary<string, object> a)
+        {
+            var paths = new List<string>();
+            object po;
+            if (a.TryGetValue("paths", out po) && po is object[]) foreach (var x in (object[])po) { string s = Convert.ToString(x).Trim(); if (s != "") paths.Add(s); }
+            if (paths.Count == 0 && S(a, "query") != "")
+                paths = st.Search(S(a, "query"), S(a, "project_id") == "" ? null : S(a, "project_id"), null, false, 60).Select(h => h.File.Rel).ToList();
+            if (paths.Count == 0) return "没有要导出的文件（给 paths 或 query）。";
+            string name = Regex.Replace(S(a, "folder_name") == "" ? "挑选的资料" : S(a, "folder_name"), @"[\\/:*?""<>|\r\n]", "");
+            string dir = Path.Combine(OutDir, name);
+            for (int i = 2; Directory.Exists(dir); i++) dir = Path.Combine(OutDir, name + "(" + i + ")");
+            Directory.CreateDirectory(dir);
+            var rows = new List<IList<object>>(); var miss = new List<string>(); int n = 0; long bytes = 0;
+            foreach (var pth in paths.Distinct())
+            {
+                string full;
+                try { full = Full(pth); } catch { miss.Add(pth); continue; }
+                string dst = Path.Combine(dir, Path.GetFileName(full));
+                for (int i = 2; File.Exists(dst); i++) dst = Path.Combine(dir, Path.GetFileNameWithoutExtension(full) + "(" + i + ")" + Path.GetExtension(full));
+                try { File.Copy(full, dst); } catch { miss.Add(pth); continue; }
+                n++; var fi = new FileInfo(full); bytes += fi.Length;
+                rows.Add(new List<object> { (double)n, Path.GetFileName(dst), fi.LastWriteTime.ToString("yyyy-MM-dd"), Ui.Size(fi.Length), pth });
+            }
+            if (n == 0) { try { Directory.Delete(dir); } catch { } return "一个文件也没找到：" + string.Join("；", miss.Take(10)); }
+            Tool("导出文件：" + n + " 份 → " + Path.GetFileName(dir));
+            Store.WriteXlsx(Path.Combine(dir, "文件清单.xlsx"), "文件清单", new[] { "序号", "文件名", "日期", "大小", "档案中的位置" }, rows);
+            string outPath = dir;
+            if (a.ContainsKey("zip") && Convert.ToString(a["zip"]).ToLowerInvariant() == "true")
+            {
+                outPath = dir + ".zip"; if (File.Exists(outPath)) File.Delete(outPath);
+                System.IO.Compression.ZipFile.CreateFromDirectory(dir, outPath, System.IO.Compression.CompressionLevel.Optimal, true, Encoding.UTF8);
+            }
+            Output(outPath);
+            return "已导出 " + n + " 份（" + Ui.Size(bytes) + "）到：" + outPath + (miss.Count > 0 ? "\n没找到：" + string.Join("；", miss.Take(10)) : "") + "\n附 文件清单.xlsx。";
         }
 
         string ExportPack(Dictionary<string, object> a)

@@ -118,6 +118,15 @@ namespace DangAn
                     if (myBatch != null && b != null && b != myBatch) continue;   // 合并表里别的批次
                     string key = pay.Dir + "|" + pay.Date + "|" + pay.VoucherNo + "|" + pay.Amount.ToString("0.00") + "|" + (pay.VoucherNo == "" ? pay.Summary : "");
                     if (!seen.Add(key)) continue;
+                    // 同一笔出现在两张明细表里（一张带凭证号，一张是汇总表）：合并成一笔
+                    var twin = result.FirstOrDefault(x => Dedup.SamePayment(x, pay));
+                    if (twin != null)
+                    {
+                        if (twin.VoucherNo == "" && pay.VoucherNo != "") { twin.VoucherNo = pay.VoucherNo; twin.Source = pay.Source; }
+                        if (twin.Date == "") twin.Date = pay.Date;
+                        if (twin.Note == "") twin.Note = pay.Note;
+                        continue;
+                    }
                     // 保留以前手工改过的关联
                     var prev = oldAuto.FirstOrDefault(o => o.Dir == pay.Dir && o.Date == pay.Date && o.VoucherNo == pay.VoucherNo && Math.Abs(o.Amount - pay.Amount) < 0.01);
                     if (prev != null) { pay.VoucherFile = prev.VoucherFile; pay.InvoiceFile = prev.InvoiceFile; pay.Contract = prev.Contract; pay.Party = prev.Party; if (prev.Note != "" && pay.Note == "") pay.Note = prev.Note; }

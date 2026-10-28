@@ -344,6 +344,7 @@ namespace DangAn
             moreBtn = Ui.MenuBtn("更多", false, null,
                 "从“支出明细表 / 收入明细表”导入", imp,
                 "从合同、凭证扫描件里拆分发票", (Action)(() => SplitInvoices(moreBtn)),
+                "查重合并（重复的收支、合同）", (Action)(() => { if (DedupDialog.Show(this, St, P)) Reload(); }),
                 "导出收支明细（Excel）", (Action)(() => Exports.Payments(this, St, P)));
             var addInv = Ui.Btn("添加发票", false, "plus");
             addInv.Click += (s, e) =>
@@ -354,6 +355,14 @@ namespace DangAn
             var aiFin = Ui.Btn("AI 整理合同收支", true, "coin");
             aiFin.Click += (s, e) => { Commit(); if (AiFinanceForm.Run(this, St, P)) Reload(); };
             secFinance.Controls.Add(SectionHead("财务", "", aiFin, add, addInv, moreBtn));
+            int dupN = P.IsRoot ? 0 : Dedup.Count(P);
+            if (dupN > 0)
+            {
+                var dp = new Panel { Height = Ui.S(34), BackColor = Color.White };
+                var dl = new LinkLabel { Text = "⚠ 发现 " + dupN + " 条重复的收支 / 合同记录（统计会多算）· 点这里查重合并", AutoSize = true, Font = Ui.F(9.5f, FontStyle.Bold), LinkColor = Ui.Orange, ActiveLinkColor = Ui.Orange, LinkBehavior = LinkBehavior.HoverUnderline, Location = new Point(0, Ui.S(6)) };
+                dl.LinkClicked += (s, e) => { if (DedupDialog.Show(this, St, P)) Reload(); };
+                dp.Controls.Add(dl); secFinance.Controls.Add(dp);
+            }
 
             var sm = Finance.Sum(St, P);
             var tiles = new TableLayoutPanel { Height = Ui.S(88), ColumnCount = 7, RowCount = 1, BackColor = Color.White, Margin = new Padding(0, 0, 0, Ui.S(10)) };

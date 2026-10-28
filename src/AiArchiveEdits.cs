@@ -130,6 +130,46 @@ namespace DangAn
                 });
         }
 
+        /// <summary>查出重复的收支、合同，每组提交一条“合并”修改（保留信息最全的一条），等用户确认。</summary>
+        public static string Dedupe(Store st, AiChat chat, Dictionary<string, object> a)
+        {
+            var p = Find(st, a);
+            var pays = Dedup.Payments(p); var cons = Dedup.Contracts(p);
+            if (pays.Count + cons.Count == 0) return "“" + p.Name + "”没有发现重复的收支或合同。";
+            var res = new List<string>();
+            foreach (var g in pays) { var gg = g; res.Add(Add(chat, p, "财务", "合并重复（" + g.Why + "）：保留 " + Dedup.Desc(g.Keep) + "；删除 " + string.Join("；", g.Drop.Select(Dedup.Desc)), "同日同额同方向，凭证号不冲突", () => Dedup.Merge(p, gg))); }
+            foreach (var g in cons) { var gg = g; res.Add(Add(chat, p, "合同台账", "合并重复（" + g.Why + "）：保留 " + Dedup.Desc(g.Keep) + "；删除 " + string.Join("；", g.Drop.Select(Dedup.Desc)), "同一相对方、同金额", () => Dedup.Merge(p, gg))); }
+            double extra = pays.Sum(g => g.Drop.Where(x => x.Dir != "收入").Sum(x => x.Amount));
+            return "发现 " + pays.Count + " 组重复收支（多算支出 " + M(extra) + " 元）、" + cons.Count + " 组重复合同，已提交合并，等用户确认：\n" + string.Join("\n", res);
+        }
+
+        /// <summary>修改已有的一笔收支（按日期 + 金额找到它）。</summary>
+        public static string UpdatePayment(Store st, AiChat chat, Dictionary<string, object> a)
+        {
+            var p = Find(st, a);
+            double amt = N(a, "match_amount"); string date = S(a, "match_date"), vno = S(a, "match_voucher_no");
+            var hits = p.Payments.Where(x => Math.Abs(x.Amount - amt) < 0.01 && (date == "" || x.Date == date) && (vno == "" || x.VoucherNo == vno)).ToList();
+            if (hits.Count != 1) return hits.Count == 0 ? "没找到 " + (date == "" ? "" : date + " ") + M(amt) + " 元这一笔。" : "有 " + hits.Count + " 笔符合，请再给出日期或凭证号（match_date / match_voucher_no）；如果是重复记录，用 dedupe_records。";
+            var x0 = hits[0]; var files = st.FilesOf(p).ToList();
+            var diffs = new List<string>(); var sets = new List<Action>();
+            Action<string, string, string, Action<string>> txt = (field, label, old, set) =>
+            {
+                if (!Has(a, field)) return; string v = S(a, field); if (v == old) return;
+                diffs.Add(label + " " + (old == "" ? "（空）" : AiClient.Cut(old, 30)) + " → " + AiClient.Cut(v, 40)); sets.Add(() => set(v));
+            };
+            txt("date", "日期", x0.Date, v => x0.Date = v);
+            txt("dir", "收/支", x0.Dir, v => x0.Dir = v.Contains("收") ? "收入" : "支出");
+            if (Has(a, "amount") && Math.Abs(N(a, "amount") - x0.Amount) >= 0.01) { double v = N(a, "amount"); diffs.Add("金额 " + M(x0.Amount) + " → " + M(v)); sets.Add(() => x0.Amount = v); }
+            txt("summary", "摘要", x0.Summary, v => x0.Summary = v);
+            txt("contract", "关联合同", x0.Contract, v => x0.Contract = v);
+            txt("voucher_no", "凭证号", x0.VoucherNo, v => x0.VoucherNo = v);
+            if (Has(a, "voucher_file")) { string r = AiFinance.Resolve(files, S(a, "voucher_file")); if (r != "" && r != x0.VoucherFile) { diffs.Add("凭证 → " + System.IO.Path.GetFileName(r)); sets.Add(() => x0.VoucherFile = r); } }
+            if (Has(a, "invoice_file")) { string r = AiFinance.Resolve(files, S(a, "invoice_file")); if (r != "" && r != x0.InvoiceFile) { diffs.Add("发票 → " + System.IO.Path.GetFileName(r)); sets.Add(() => x0.InvoiceFile = r); } }
+            txt("note", "备注", x0.Note, v => x0.Note = v);
+            if (diffs.Count == 0) return "这一笔没有要改的。";
+            return Add(chat, p, "财务", "修改 " + Dedup.Desc(x0) + "：" + string.Join("；", diffs), S(a, "reason"), () => { foreach (var s in sets) s(); });
+        }
+
         public static string Remove(Store st, AiChat chat, Dictionary<string, object> a)
         {
             var p = Find(st, a);
