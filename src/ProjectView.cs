@@ -202,7 +202,10 @@ namespace DangAn
                 c.Controls.Add(dot); c.Controls.Add(a); c.Controls.Add(b);
                 tiles.Controls.Add(c, i, 0);
             }
-            secOverview.Controls.Add(SectionHead("概况", P.IsRoot ? "根目录里还没归到项目的散件" : P.Code + " · " + P.Type));
+            var seven = Ui.Btn("生成七公开公告栏", true, "table");
+            seven.Visible = !P.IsRoot;
+            seven.Click += (s, e) => MakeSeven(seven);
+            secOverview.Controls.Add(SectionHead("概况", P.IsRoot ? "根目录里还没归到项目的散件" : P.Code + " · " + P.Type, seven));
             secOverview.Controls.Add(tiles);
             if (!P.IsRoot)
             {
@@ -810,6 +813,37 @@ namespace DangAn
             Reload();
             m.SetStatus("发票：登记 " + recs.Count + " 张");
             if (msgs.Count > 0) Ui.Info(string.Join("\n", msgs.Take(20)));
+        }
+
+        /// <summary>生成“七公开”电子公告栏（HTML + PDF），放在“文档\项目档案室 AI 输出”。</summary>
+        void MakeSeven(Button btn)
+        {
+            Commit();
+            var cfg = AiConfig.Load();
+            if (!cfg.Ready)
+            {
+                if (Ui.Ask("生成七公开要用 AI 整理公示内容，还没有设置 AI 接口密钥。现在去设置吗？")) AiSettingsDialog.Show(this);
+                cfg = AiConfig.Load(); if (!cfg.Ready) return;
+            }
+            string asOf = Ui.Prompt("七公开公告栏", "公告截至日期（直接确定 = 今天）：", DateTime.Now.ToString("yyyy年M月d日"));
+            if (asOf == null) return;
+            btn.Enabled = false;
+            var th = new System.Threading.Thread(() =>
+            {
+                SevenDisclosure.Result r = null; string err = null;
+                try { r = SevenDisclosure.Build(St, cfg, P, asOf, AiChat.OutDir, s => m.SetStatus("七公开：" + s)); }
+                catch (Exception ex) { err = ex.Message; }
+                BeginInvoke(new Action(() =>
+                {
+                    btn.Enabled = true;
+                    if (err != null) { m.SetStatus("七公开没生成：" + err); Ui.Info("七公开没生成：" + err); return; }
+                    m.SetStatus("七公开公告栏已生成");
+                    string msg = "已生成七公开电子公告栏（佐证材料 " + r.Thumbs + " 张）：\n网页版：" + Path.GetFileName(r.Html) + (r.Pdf != null ? "\nPDF：" + Path.GetFileName(r.Pdf) : "\n" + string.Join("\n", r.Log))
+                        + (r.Data.Missing.Count > 0 ? "\n\n档案里还缺：\n· " + string.Join("\n· ", r.Data.Missing.Take(8)) : "") + "\n\n现在打开网页版看看吗？";
+                    if (Ui.Ask(msg)) Ui.Open(r.Html); else Ui.Reveal(r.Pdf ?? r.Html);
+                }));
+            });
+            th.IsBackground = true; th.SetApartmentState(System.Threading.ApartmentState.STA); th.Start();
         }
 
         /// <summary>恢复本项目里之前“移除”的资料。</summary>

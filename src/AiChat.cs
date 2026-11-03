@@ -25,6 +25,27 @@ namespace DangAn
         public Action<string> OnOutput;        // 生成了新文件
         /// <summary>AI 提交的档案修改（合同台账、关键信息、收支），等用户确认后才写入。</summary>
         public readonly List<PendingChange> Pending = new List<PendingChange>();
+        /// <summary>对话中出现过的文件（档案路径、文件名 → 完整路径），回答里提到时做成可点的链接。</summary>
+        public readonly Dictionary<string, string> Known = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        void Remember(string full)
+        {
+            if (string.IsNullOrEmpty(full)) return;
+            Known[full] = full;
+            Known[Path.GetFileName(full)] = full;
+            string root = st.Lib.Root.TrimEnd('\\') + "\\";
+            if (full.StartsWith(root, StringComparison.OrdinalIgnoreCase)) Known[full.Substring(root.Length)] = full;
+        }
+
+        /// <summary>回答里的 [[路径]] 或文件名 → 完整路径；找不到返回 null。</summary>
+        public string ResolveLink(string token)
+        {
+            token = (token ?? "").Trim().Trim('"', '“', '”', '《', '》');
+            string f;
+            if (Known.TryGetValue(token, out f) && File.Exists(f)) return f;
+            if (Known.TryGetValue(Path.GetFileName(token), out f) && File.Exists(f)) return f;
+            try { f = Full(token); return File.Exists(f) ? f : null; } catch { return null; }
+        }
         public const int MaxRounds = 30, ToolResultMax = 12000, OldToolMax = 1200;
         readonly List<string> attached = new List<string>();   // 本次对话收到过的所有附件
 
@@ -65,7 +86,9 @@ namespace DangAn
                 + "9. 所有数字计算（元换万元、比例、合计、差额、核对）都用 calculate 工具算，不要心算。\n"
                 + "10. 用户要你把信息登记、补全、更正到项目的关键信息、合同台账、财务收支时：先查原文核实，再用 set_project_info / upsert_contract / add_payment / remove_record 提交。"
                 + "这些修改不会马上生效，会列在对话下方等用户点“确认写入”；每条都写明依据（文件名和原文摘录）。只有发票、没有付款凭证的，不登记为已付款。提交后告诉用户请在下方核对确认。\n"
-                + "11. 回答用简洁的中文；少用 Markdown 表格和符号，需要表格时生成 Excel。";
+                + "11. 回答里提到档案中的具体文件（原件、凭证、合同、批复等）时，用 [[文件路径]] 标出（照抄工具返回的路径），用户点一下就能打开原件；生成的新文件也用 [[完整路径]] 标出。\n"
+                + "12. 用户要“七公开”公告栏（农村公路建设信息七公开），用 make_seven_disclosure 生成 HTML 和 PDF 成品；要把 Word、Excel、网页转成 PDF，用 convert_to_pdf。\n"
+                + "13. 回答用简洁的中文；少用 Markdown 表格和符号，需要表格时生成 Excel。";
         }
 
         static Dictionary<string, object> Msg(string role, string content) { return new Dictionary<string, object> { { "role", role }, { "content", content } }; }
@@ -168,6 +191,9 @@ namespace DangAn
                 "project_id", P("string", "项目编号"), "date", P("string", "日期"), "dir", P("string", "支出 或 收入"), "amount", P("number", "金额（元）"),
                 "summary", P("string", "摘要"), "party", P("string", "对方单位"), "contract", P("string", "对应合同类型"), "voucher_no", P("string", "凭证号"),
                 "voucher_file", P("string", "凭证文件路径"), "invoice_file", P("string", "发票文件路径"), "note", P("string", "备注/依据")), "project_id", "dir", "amount"),
+            Fn("make_seven_disclosure", "为一个项目生成“农村公路建设信息七公开电子公告栏”成品：AI 查档案整理七项公示内容并附佐证材料缩略图，输出 HTML 网页和 PDF。", Props(
+                "project_id", P("string", "项目编号"), "as_of", P("string", "公告截至日期，如 2026年9月24日（可省略=今天）")), "project_id"),
+            Fn("convert_to_pdf", "把 Word / Excel / 网页（html）文件转成 PDF（新文件，原文件不动）。", Props("path", P("string", "文件路径（档案路径、附件或生成的文件）")), "path"),
             Fn("dedupe_records", "查出某项目合同台账、收支明细里重复登记的记录（如两张明细表都导入了同一笔），每组提交一条合并（保留信息最全的），等用户确认。统计合同、支出前先用它查重。", Props(
                 "project_id", P("string", "项目编号")), "project_id"),
             Fn("update_payment", "提交修改已有的一笔收支（按 match_amount + match_date / match_voucher_no 找到它），等用户确认。", Props(
@@ -214,6 +240,7 @@ namespace DangAn
                         if (p == null) p = st.RealProjects.FirstOrDefault(x => x.Name.Contains(S(a, "project_id")));
                         if (p == null) return "没有这个项目编号。先用 list_projects 查看。";
                         Tool("查看项目：" + p.Name);
+                        foreach (var f in st.FilesOf(p)) Remember(st.FullPath(f));
                         return AiFiller.Dossier(st, p, new AiPlan(), 10000)
                             + "\n—— 关键信息栏目（含空栏，set_project_info 用这些名称） ——\n" + string.Join("、", p.Fields.Select(f => f.Name + (string.IsNullOrWhiteSpace(f.Value) ? "（空）" : "")));
                     }
@@ -223,6 +250,7 @@ namespace DangAn
                         Tool("搜索档案：" + q);
                         var hits = st.Search(q, pid == "" ? null : pid, null, false, 20);
                         if (hits.Count == 0) return "没有找到包含“" + q + "”的资料。可以换个说法或少几个词再搜。";
+                        foreach (var h in hits) Remember(st.FullPath(h.File));
                         return string.Join("\n", hits.Select(h => { var p = st.Proj(h.File.Project); return "【" + h.File.Rel + "】（" + (p == null ? "" : p.Name) + "）" + h.Snippet; }));
                     }
                 case "read_file": return ReadFile(S(a, "path"), a.ContainsKey("max_chars") ? Math.Max(1000, Math.Min(40000, (int)Num(a["max_chars"]))) : 12000);
@@ -241,6 +269,34 @@ namespace DangAn
                 case "set_project_info": return ArchiveEdits.SetInfo(st, this, a);
                 case "export_project_files": return ExportPack(a);
                 case "dedupe_records": return ArchiveEdits.Dedupe(st, this, a);
+                case "make_seven_disclosure":
+                    {
+                        string id = S(a, "project_id");
+                        var p = st.Proj(id) ?? st.RealProjects.FirstOrDefault(x => id != "" && x.Name.Contains(id));
+                        if (p == null || p.IsRoot) return "没有这个项目：" + id;
+                        Tool("生成七公开公告栏：" + p.Name);
+                        var r = SevenDisclosure.Build(st, cfg, p, S(a, "as_of"), OutDir, s => Tool(s));
+                        Output(r.Html); if (r.Pdf != null) Output(r.Pdf);
+                        return "已生成七公开电子公告栏：\n网页版：" + r.Html + (r.Pdf != null ? "\nPDF：" + r.Pdf : "") + "\n佐证材料缩略图 " + r.Thumbs + " 张。"
+                            + "\n各项要点：\n" + string.Join("\n", r.Data.Sections.Select(x => x.No + "、" + x.Category + "：" + string.Join("；", x.Points.Take(2)).Replace("\n", " ")))
+                            + (r.Data.Missing.Count > 0 ? "\n档案里缺的：" + string.Join("；", r.Data.Missing) : "") + (r.Log.Count > 0 ? "\n" + string.Join("\n", r.Log) : "");
+                    }
+                case "convert_to_pdf":
+                    {
+                        string src = Full(S(a, "path")), ext = Path.GetExtension(src).ToLowerInvariant();
+                        if (ext == ".pdf") return "这个文件本来就是 PDF：" + src;
+                        string dst = NewPath(Path.GetFileNameWithoutExtension(src), ".pdf");
+                        Tool("转成 PDF：" + Path.GetFileName(src));
+                        if (ext == ".html" || ext == ".htm") { string err = SevenDisclosure.ToPdf(src, dst); if (err != null) return "没转成：" + err; }
+                        else
+                        {
+                            string tmp = SevenDisclosure.OfficeToPdf(src);
+                            if (tmp == null) return "没转成：本机没有 Word / Excel / WPS，或文件打不开。";
+                            File.Copy(tmp, dst, true); try { File.Delete(tmp); } catch { }
+                        }
+                        Output(dst);
+                        return "已转成 PDF：" + dst;
+                    }
                 case "update_payment": return ArchiveEdits.UpdatePayment(st, this, a);
                 case "collect_files": return Collect(a);
                 case "upsert_contract": return ArchiveEdits.UpsertContract(st, this, a);
@@ -251,7 +307,7 @@ namespace DangAn
         }
 
         void Tool(string s) { if (OnTool != null) OnTool(s); }
-        void Output(string path) { Outputs.Add(path); if (OnOutput != null) OnOutput(path); }
+        void Output(string path) { Outputs.Add(path); Remember(path); if (OnOutput != null) OnOutput(path); }
 
         static string S(Dictionary<string, object> o, string k) { object v; return o.TryGetValue(k, out v) && v != null ? Convert.ToString(v, CultureInfo.InvariantCulture).Trim() : ""; }
         static double Num(object v) { double d; return double.TryParse(Convert.ToString(v, CultureInfo.InvariantCulture), NumberStyles.Any, CultureInfo.InvariantCulture, out d) ? d : 0; }
@@ -295,6 +351,7 @@ namespace DangAn
         string ReadFile(string path, int max)
         {
             string full = Full(path), ext = Path.GetExtension(full).ToLowerInvariant();
+            Remember(full);
             Tool("读取：" + Path.GetFileName(full));
             string text = null;
             if (ext == ".xls" || ext == ".xlsx" || ext == ".xlsm" || ext == ".et")

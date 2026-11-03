@@ -19,6 +19,9 @@ namespace DangAn
         Panel pendPanel; CheckedListBox pendList; Label pendTitle; string noteForAi = "";
         readonly List<string> attachments = new List<string>();
         bool busy;
+        /// <summary>对话里的文件链接：文字位置 → 文件。</summary>
+        class Link { public int Start, Len; public string Path; }
+        readonly List<Link> links = new List<Link>();
         public string Crumb { get { return "项目档案室  ›  AI 助手"; } }
 
         static readonly string[] Examples =
@@ -27,6 +30,7 @@ namespace DangAn
             "2025年农村公路安全生产工程的预付款是多少？依据是哪份文件？",
             "根据档案写一份2025年农村公路安全生产基础设施建设工程的情况说明（Word）",
             "帮我用档案把附件里的表填好",
+            "生成2025年农村公路安全生产基础设施建设工程的七公开公告栏",
         };
 
         public ChatPage(MainForm m)
@@ -34,7 +38,7 @@ namespace DangAn
             this.m = m; BackColor = Ui.Bg;
             var head = new Panel { Height = Ui.S(84) };
             var t1 = Ui.Lbl("AI 助手", 19f, true, Ui.Text); t1.Location = new Point(0, 0);
-            var t2 = Ui.Lbl("问档案里的事，或把 Word / Excel 拖进来让 AI 处理：填表、改文字、写材料、做汇总。生成的都是新文件，原文件不动。", 9.5f, false, Ui.Sub); t2.Location = new Point(Ui.S(2), Ui.S(54));
+            var t2 = Ui.Lbl("问档案里的事（回答里的文件点一下就打开原件），或把文件、压缩包拖进来让 AI 处理。生成的都是新文件，原文件不动。", 9.5f, false, Ui.Sub); t2.Location = new Point(Ui.S(2), Ui.S(54));
             var hr = Ui.Row(); hr.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             var bNew = Ui.Btn("新对话", false, "plus"); bNew.Click += (s, e) => NewChat();
             var bDir = Ui.Btn("打开输出文件夹", false, "open"); bDir.Click += (s, e) => Ui.Open(AiChat.OutDir);
@@ -45,6 +49,26 @@ namespace DangAn
 
             view = new RichTextBox { Dock = DockStyle.Fill, ReadOnly = true, BorderStyle = BorderStyle.None, BackColor = Color.White, Font = Ui.F(10.5f), DetectUrls = false, ScrollBars = RichTextBoxScrollBars.Vertical };
             var viewCard = new Card { Padding = new Padding(Ui.S(18), Ui.S(14), Ui.S(10), Ui.S(10)) }; viewCard.Controls.Add(view);
+            // 文件链接：单击打开原件，右键可打开所在文件夹
+            view.MouseMove += (s, e) => view.Cursor = LinkAt(e.Location) != null ? Cursors.Hand : Cursors.IBeam;
+            view.MouseUp += (s, e) =>
+            {
+                var lk = LinkAt(e.Location); if (lk == null) return;
+                if (e.Button == MouseButtons.Right)
+                {
+                    var cm = new ContextMenuStrip { Font = Ui.F(9.5f) };
+                    cm.Items.Add("打开", null, (a, b) => OpenLink(lk.Path)); cm.Items.Add("打开所在文件夹", null, (a, b) => Ui.Reveal(lk.Path));
+                    cm.Show(view, e.Location);
+                }
+                else if (view.SelectionLength == 0) OpenLink(lk.Path);
+            };
+            // 文件、压缩包直接拖进对话区或输入框
+            foreach (Control dz in new Control[] { view, this })
+            {
+                dz.AllowDrop = true;
+                dz.DragEnter += (s, e) => { if (e.Data.GetDataPresent(DataFormats.FileDrop)) e.Effect = DragDropEffects.Copy; };
+                dz.DragDrop += (s, e) => Attach((string[])e.Data.GetData(DataFormats.FileDrop));
+            }
 
             tips = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, BackColor = Color.White, Padding = new Padding(0, 0, 0, Ui.S(6)) };
             foreach (var ex in Examples)
@@ -70,16 +94,18 @@ namespace DangAn
             attachRow = new FlowLayoutPanel { Height = Ui.S(34), Dock = DockStyle.Top, Visible = false, BackColor = Color.White, WrapContents = false, AutoScroll = true };
 
             var box = new Card { Height = Ui.S(118), Padding = new Padding(Ui.S(14), Ui.S(10), Ui.S(14), Ui.S(10)) };
-            input = new TextBox { Multiline = true, Dock = DockStyle.Fill, BorderStyle = BorderStyle.None, Font = Ui.F(10.5f), ScrollBars = ScrollBars.Vertical, AcceptsReturn = true };
+            input = new TextBox { Multiline = true, Dock = DockStyle.Fill, BorderStyle = BorderStyle.None, Font = Ui.F(10.5f), ScrollBars = ScrollBars.Vertical, AcceptsReturn = true, AllowDrop = true };
+            input.DragEnter += (s, e) => { if (e.Data.GetDataPresent(DataFormats.FileDrop)) e.Effect = DragDropEffects.Copy; };
+            input.DragDrop += (s, e) => Attach((string[])e.Data.GetData(DataFormats.FileDrop));
             input.KeyDown += (s, e) =>
             {
                 if (e.KeyCode == Keys.Enter && !e.Shift) { e.SuppressKeyPress = true; Send(); }
             };
             var ops = Ui.Row(); ops.Dock = DockStyle.Bottom; ops.Height = Ui.S(44);
-            var bAtt = Ui.Btn("添加附件（Word / Excel / PDF）", false, "upload");
+            var bAtt = Ui.Btn("添加附件（文件 / 压缩包）", false, "upload");
             bAtt.Click += (s, e) =>
             {
-                using (var d = new OpenFileDialog { Multiselect = true, Title = "选择要交给 AI 处理的文件", Filter = "Word / Excel / PDF / 图片|*.doc;*.docx;*.wps;*.xls;*.xlsx;*.xlsm;*.et;*.pdf;*.jpg;*.jpeg;*.png;*.txt|所有文件|*.*" })
+                using (var d = new OpenFileDialog { Multiselect = true, Title = "选择要交给 AI 处理的文件", Filter = "Word / Excel / PDF / 图片|*.doc;*.docx;*.wps;*.xls;*.xlsx;*.xlsm;*.et;*.pdf;*.ofd;*.jpg;*.jpeg;*.png;*.txt;*.csv;*.zip;*.rar;*.7z|所有文件|*.*" })
                     if (d.ShowDialog(this) == DialogResult.OK) Attach(d.FileNames);
             };
             send = Ui.Btn("发送", true, "chat"); send.Click += (s, e) => Send();
@@ -155,7 +181,7 @@ namespace DangAn
             if (pendPanel != null) { pendPanel.Visible = false; pendList.Items.Clear(); }
             chat.OnTool = s => OnUi(() => Line("　· " + s, Ui.Sub, 9f, false));
             chat.OnOutput = p => OnUi(() => AddOutput(p));
-            view.Clear(); attachments.Clear(); RefreshAttach();
+            view.Clear(); links.Clear(); attachments.Clear(); RefreshAttach();
             foreach (Control c in outRow.Controls.Cast<Control>().ToList()) { outRow.Controls.Remove(c); c.Dispose(); }
             outRow.Visible = false; tips.Visible = true;
             Line("你好！我可以：", Ui.Text, 10.5f, true);
@@ -179,9 +205,10 @@ namespace DangAn
             view.SelectionStart = view.TextLength; view.ScrollToCaret();
         }
 
-        /// <summary>AI 的回答：去掉 Markdown 记号，标题加粗。</summary>
+        /// <summary>AI 的回答：去掉 Markdown 记号，标题加粗；[[路径]] 和对话里出现过的文件名做成可点的链接。</summary>
         void Answer(string text)
         {
+            var names = chat.Known.Keys.Where(k => k.IndexOf('\\') < 0 && k.Length >= 5 && k.Contains(".")).OrderByDescending(k => k.Length).ToList();
             foreach (var raw in (text ?? "").Replace("\r\n", "\n").Split('\n'))
             {
                 string l = raw.TrimEnd();
@@ -191,8 +218,65 @@ namespace DangAn
                 bool bold = head || Regex.IsMatch(l, @"^\*\*[^*]+\*\*[:：]?$");
                 l = l.Replace("**", "").Replace("`", "");
                 l = Regex.Replace(l, @"^\s*[-*]\s+", "· ");
-                Line(l, Ui.Text, 10.5f, bold);
+                // 切成“普通文字 / 文件链接”几段
+                var segs = new List<KeyValuePair<string, string>>();
+                int pos = 0;
+                foreach (Match mt in Regex.Matches(l, @"\[\[([^\]]+)\]\]"))
+                {
+                    if (mt.Index > pos) Plain(segs, l.Substring(pos, mt.Index - pos), names);
+                    string path = chat.ResolveLink(mt.Groups[1].Value);
+                    string shown = Path.GetFileName(mt.Groups[1].Value.Trim());
+                    segs.Add(new KeyValuePair<string, string>(path != null ? shown : mt.Groups[1].Value, path));
+                    pos = mt.Index + mt.Length;
+                }
+                if (pos < l.Length) Plain(segs, l.Substring(pos), names);
+                Segs(segs, bold);
             }
+        }
+
+        /// <summary>普通文字里出现对话中查到过的文件名，也做成链接。</summary>
+        void Plain(List<KeyValuePair<string, string>> segs, string s, List<string> names)
+        {
+            while (s.Length > 0)
+            {
+                int best = -1; string hit = null;
+                foreach (var n in names) { int i = s.IndexOf(n, StringComparison.OrdinalIgnoreCase); if (i >= 0 && (best < 0 || i < best)) { best = i; hit = n; } }
+                if (hit == null) { segs.Add(new KeyValuePair<string, string>(s, null)); return; }
+                if (best > 0) segs.Add(new KeyValuePair<string, string>(s.Substring(0, best), null));
+                segs.Add(new KeyValuePair<string, string>(s.Substring(best, hit.Length), chat.ResolveLink(hit)));
+                s = s.Substring(best + hit.Length);
+            }
+        }
+
+        void Segs(List<KeyValuePair<string, string>> segs, bool bold)
+        {
+            foreach (var sg in segs)
+            {
+                view.SelectionStart = view.TextLength; view.SelectionLength = 0;
+                bool isLink = sg.Value != null;
+                view.SelectionFont = Ui.F(10.5f, (bold ? FontStyle.Bold : FontStyle.Regular) | (isLink ? FontStyle.Underline : FontStyle.Regular));
+                view.SelectionColor = isLink ? Ui.Blue : Ui.Text;
+                int start = view.TextLength;
+                view.AppendText(isLink ? "📄" + sg.Key : sg.Key);
+                if (isLink) links.Add(new Link { Start = start, Len = view.TextLength - start, Path = sg.Value });
+            }
+            view.SelectionStart = view.TextLength; view.SelectionFont = Ui.F(10.5f); view.AppendText("\n");
+            view.SelectionStart = view.TextLength; view.ScrollToCaret();
+        }
+
+        Link LinkAt(Point pt)
+        {
+            if (links.Count == 0) return null;
+            int i = view.GetCharIndexFromPosition(pt);
+            var p0 = view.GetPositionFromCharIndex(i);
+            if (pt.Y < p0.Y - 2 || pt.Y > p0.Y + view.Font.Height * 2 || Math.Abs(pt.X - p0.X) > view.Font.Height * 2) return null;
+            return links.FirstOrDefault(l => i >= l.Start && i < l.Start + l.Len);
+        }
+
+        void OpenLink(string path)
+        {
+            if (File.Exists(path) || Directory.Exists(path)) Ui.Open(path);
+            else Ui.Info("找不到这个文件（可能被移动或删除了）：\n" + path);
         }
 
         /// <summary>添加附件：先复制一份到“AI 输出\附件”，微信等清理临时文件后也不影响。</summary>
@@ -201,7 +285,23 @@ namespace DangAn
             string dir = Path.Combine(AiChat.OutDir, "附件");
             foreach (var f in files)
             {
+                if (Directory.Exists(f)) { Attach(Directory.GetFiles(f, "*", SearchOption.AllDirectories).Take(60)); continue; }   // 拖进来的是文件夹
                 if (!File.Exists(f)) continue;
+                if (Store.IsArchive(f))
+                {
+                    // 压缩包：解压到“AI 输出\附件\压缩包名”，里面的文件都作为附件
+                    string to = Path.Combine(dir, Path.GetFileNameWithoutExtension(f));
+                    for (int i = 2; Directory.Exists(to); i++) to = Path.Combine(dir, Path.GetFileNameWithoutExtension(f) + "(" + i + ")");
+                    try
+                    {
+                        Store.Extract(f, to);
+                        var inner = Directory.GetFiles(to, "*", SearchOption.AllDirectories).Where(x => !Store.IsArchive(x)).ToList();
+                        Line("　📦 已解压 " + Path.GetFileName(f) + "：" + inner.Count + " 个文件" + (inner.Count > 40 ? "（前 40 个作为附件）" : ""), Ui.Sub, 9f, false);
+                        foreach (var x in inner.Take(40)) if (!attachments.Contains(x)) attachments.Add(x);
+                    }
+                    catch (Exception ex) { Line("　× 解压失败：" + Path.GetFileName(f) + "（" + ex.Message + "）", Ui.Red, 9f, false); }
+                    continue;
+                }
                 string keep = f;
                 try
                 {
@@ -281,7 +381,8 @@ namespace DangAn
             l.LinkClicked += (s, e) => { if (File.Exists(path)) Ui.Open(path); };
             var ctx = new ContextMenuStrip(); ctx.Items.Add("打开", null, (s, e) => Ui.Open(path)); ctx.Items.Add("打开所在文件夹", null, (s, e) => Ui.Reveal(path)); l.ContextMenuStrip = ctx;
             outRow.Controls.Add(l);
-            Line("　📄 " + Path.GetFileName(path) + "（下方“生成的文件”里点一下打开）", Ui.Green, 9.5f, false);
+            var segs = new List<KeyValuePair<string, string>> { new KeyValuePair<string, string>("　生成了：", null), new KeyValuePair<string, string>(Path.GetFileName(path), path) };
+            Segs(segs, false);
         }
 
         void Send()

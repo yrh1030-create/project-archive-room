@@ -162,6 +162,7 @@ namespace DangAn
         public static string Resolve(List<FileRec> files, string s)
         {
             s = (s ?? "").Trim().Replace('/', '\\').Trim('\\');
+            if (s.Contains("｜")) s = s.Substring(s.LastIndexOf('｜') + 1).Trim();   // 去掉“分类｜”前缀
             if (s == "") return "";
             var f = files.FirstOrDefault(x => string.Equals(x.Rel, s, StringComparison.OrdinalIgnoreCase))
                  ?? files.FirstOrDefault(x => x.Rel.EndsWith("\\" + s, StringComparison.OrdinalIgnoreCase))

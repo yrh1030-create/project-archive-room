@@ -223,8 +223,39 @@ namespace DangAn
             string s = reply ?? "";
             int a = s.IndexOf('{'), b = s.LastIndexOf('}');
             if (a < 0 || b <= a) throw new AiException("AI 没有按要求返回 JSON：" + Cut(s, 200));
-            try { return (Dictionary<string, object>)new JavaScriptSerializer { MaxJsonLength = int.MaxValue }.DeserializeObject(s.Substring(a, b - a + 1)); }
-            catch (Exception e) { throw new AiException("AI 返回的 JSON 有误：" + e.Message); }
+            var ser = new JavaScriptSerializer { MaxJsonLength = int.MaxValue };
+            try { return (Dictionary<string, object>)ser.DeserializeObject(s.Substring(a, b - a + 1)); }
+            catch (Exception e)
+            {
+                // 回复被截断（结尾少了 ] }）：补齐括号后再试，前面完整的内容照常使用
+                try { return (Dictionary<string, object>)ser.DeserializeObject(Close(s.Substring(a))); }
+                catch { throw new AiException("AI 返回的 JSON 有误：" + e.Message); }
+            }
+        }
+
+        /// <summary>补齐被截断的 JSON：去掉末尾不完整的部分，按顺序补上缺的 ] 和 }。</summary>
+        static string Close(string s)
+        {
+            var stack = new Stack<char>(); bool str = false, esc = false; int lastGood = 0;
+            for (int i = 0; i < s.Length; i++)
+            {
+                char c = s[i];
+                if (str) { if (esc) esc = false; else if (c == '\\') esc = true; else if (c == '"') str = false; continue; }
+                if (c == '"') str = true;
+                else if (c == '{' || c == '[') stack.Push(c);
+                else if (c == '}' || c == ']') { if (stack.Count > 0) stack.Pop(); if (stack.Count == 0) return s.Substring(0, i + 1); lastGood = i + 1; }
+                else if (c == ',') lastGood = i;
+            }
+            var sb = new StringBuilder(s.Substring(0, lastGood).TrimEnd(',', ' ', '\n', '\r'));
+            // 重新数一遍截断后还没闭合的括号
+            stack.Clear(); str = false; esc = false;
+            foreach (char c in sb.ToString())
+            {
+                if (str) { if (esc) esc = false; else if (c == '\\') esc = true; else if (c == '"') str = false; continue; }
+                if (c == '"') str = true; else if (c == '{' || c == '[') stack.Push(c); else if ((c == '}' || c == ']') && stack.Count > 0) stack.Pop();
+            }
+            while (stack.Count > 0) sb.Append(stack.Pop() == '{' ? '}' : ']');
+            return sb.ToString();
         }
 
         public static string Cut(string s, int n) { s = s ?? ""; return s.Length <= n ? s : s.Substring(0, n) + "…"; }
