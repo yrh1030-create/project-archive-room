@@ -4,7 +4,7 @@
 >
 > A Windows desktop app for managing the archives of township-level public works projects (e.g. rural roads): one folder per project, full-text search, contract & finance ledgers, invoice splitting, plus AI form-filling and an AI assistant powered by DeepSeek or any OpenAI-compatible API.
 
-**版本 Version 1.1 · 开发者 Developer: misslsf**
+**版本 Version 1.3 · 开发者 Developer: misslsf**
 
 [中文](#中文说明) | [English](#english)
 
@@ -37,7 +37,7 @@
 
 ### 安装
 
-到 [Releases](../../releases) 下载 `ProjectArchiveRoom-Setup-1.1.exe`（项目档案室安装程序），双击安装。已安装旧版本时会自动覆盖升级，档案库和设置都保留。
+到 [Releases](../../releases) 下载 `ProjectArchiveRoom-Setup-1.3.exe`（项目档案室安装程序），双击安装。已安装旧版本时会自动覆盖升级，档案库和设置都保留。
 
 首次打开时选择“项目总文件夹”（放各项目资料的那个文件夹），软件会自动扫描、分类、建立档案库。
 
@@ -87,6 +87,7 @@ build.ps1   一键编译脚本
 
 ### 更新记录
 
+- **1.3**：七公开电子公告栏（AI 整理七项公示内容 + 佐证缩略图，生成网页版和 PDF，可选保存位置）；AI 助手回答里的文件可点击打开原件，可拖入文件 / 压缩包，可转 PDF、查重合并、修改收支、导出指定文件；收支和合同查重合并；导入项目按下一级文件夹识别、去掉编号匹配同名项目；导出按分类的项目资料包；覆盖安装时旧位置不可写自动改装；安装包文件名带版本号。
 - **1.1**：AI 填上级报表、AI 整理合同收支、AI 助手（左侧栏）；添加电子发票、重开发票一键替换；移除的资料可恢复、每类资料可直接添加；AI 以原件为准（金额以大写为准）、数字计算用计算器工具。
 - **1.0**：项目总览、项目页、自动分类、全文搜索、合同台账、财务与发票拆分、导出合同 PDF 包、一键导入、一键取消关联、安装包覆盖升级。
 
@@ -119,7 +120,7 @@ build.ps1   一键编译脚本
 
 ### Installation
 
-Download `ProjectArchiveRoom-Setup-1.1.exe` from [Releases](../../releases) and run it. An existing installation is upgraded in place; the archive database and settings are kept.
+Download `ProjectArchiveRoom-Setup-1.3.exe` from [Releases](../../releases) and run it. An existing installation is upgraded in place; the archive database and settings are kept.
 
 On first launch, choose the root folder that contains all project folders. The app scans, classifies and builds the archive database automatically.
 
@@ -143,5 +144,6 @@ Outputs `build\out\项目档案室.exe` and the installer `安装包\项目档�
 
 ### Changelog
 
+- **1.3** — Seven-disclosure public notice board (AI-compiled, with evidence thumbnails, HTML + PDF, choose where to save); clickable file links, drag-in files/archives, PDF conversion, dedupe and payment edits in the AI assistant; duplicate merge for payments and contracts; folder import by sub-folder with numbering-insensitive name matching; categorized project package export; installer falls back when the old location is not writable; version in the installer file name.
 - **1.1** — AI form filling, AI contract & payment extraction, AI assistant; e-invoice import and re-issued invoice replacement; restore removed files and add files per category; AI trusts original documents over manual records (amounts in Chinese capital numerals win) and uses a calculator tool for arithmetic.
 - **1.0** — Project overview and project page, auto-classification, full-text search, contract ledger, finance and invoice splitting, contract PDF pack export, batch import, one-click unlink, in-place upgrade installer.

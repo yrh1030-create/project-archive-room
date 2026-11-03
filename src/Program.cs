@@ -10,16 +10,16 @@ using System.Windows.Forms;
 [assembly: System.Reflection.AssemblyProduct("项目档案室")]
 [assembly: System.Reflection.AssemblyCompany("misslsf")]
 [assembly: System.Reflection.AssemblyCopyright("© 2026 misslsf")]
-[assembly: System.Reflection.AssemblyDescription("项目档案室 1.1 · 开发者 misslsf")]
-[assembly: System.Reflection.AssemblyInformationalVersion("1.1")]
-[assembly: System.Reflection.AssemblyVersion("1.1.0.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.1.0.0")]
+[assembly: System.Reflection.AssemblyDescription("项目档案室 1.3 · 开发者 misslsf")]
+[assembly: System.Reflection.AssemblyInformationalVersion("1.3")]
+[assembly: System.Reflection.AssemblyVersion("1.3.0.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.3.0.0")]
 
 namespace DangAn
 {
     public static class AppInfo
     {
-        public const string Version = "1.1";
+        public const string Version = "1.3";
         public const string Developer = "misslsf";
     }
 

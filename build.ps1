@@ -28,7 +28,9 @@ Write-Host "主程序：$exe"
 
 if ($SkipSetup) { return }
 # ---------- 安装程序（内嵌主程序） ----------
-$setup = Join-Path $here '安装包\项目档案室安装程序.exe'
+# 安装包文件名带版本号（版本号取自 src\Program.cs 里的 AppInfo.Version）
+$ver = [regex]::Match([IO.File]::ReadAllText((Join-Path $here 'src\Program.cs'), [Text.Encoding]::UTF8), 'public const string Version = "([^"]+)"').Groups[1].Value
+$setup = Join-Path $here ('安装包\项目档案室安装程序_v' + $ver + '.exe')
 New-Item -ItemType Directory -Force (Split-Path $setup) | Out-Null
 & $csc /nologo /codepage:65001 /target:winexe /platform:x64 /optimize+ "/win32icon:$ico" "/win32manifest:$(Join-Path $here 'build\app.manifest')" "/out:$setup" "/resource:$exe,app.exe" "/resource:$ico,app.ico" "/r:$fw\System.Windows.Forms.dll" "/r:$fw\System.Drawing.dll" (Join-Path $here 'setup\Setup.cs') (Join-Path $here 'src\AppIcon.cs')
 if ($LASTEXITCODE -ne 0) { throw '安装程序编译失败' }

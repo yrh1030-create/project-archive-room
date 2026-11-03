@@ -12,10 +12,10 @@ using Microsoft.Win32;
 [assembly: AssemblyProduct("项目档案室")]
 [assembly: AssemblyCompany("misslsf")]
 [assembly: AssemblyCopyright("© 2026 misslsf")]
-[assembly: AssemblyDescription("项目档案室 1.1 安装程序 · 开发者 misslsf")]
-[assembly: AssemblyInformationalVersion("1.1")]
-[assembly: AssemblyVersion("1.1.0.0")]
-[assembly: AssemblyFileVersion("1.1.0.0")]
+[assembly: AssemblyDescription("项目档案室 1.3 安装程序 · 开发者 misslsf")]
+[assembly: AssemblyInformationalVersion("1.3")]
+[assembly: AssemblyVersion("1.3.0.0")]
+[assembly: AssemblyFileVersion("1.3.0.0")]
 
 namespace DangAnSetup
 {
@@ -23,7 +23,7 @@ namespace DangAnSetup
     {
         const string AppName = "项目档案室";
         const string ExeName = "项目档案室.exe";
-        public const string Version = "1.1";
+        public const string Version = "1.3";
         public const string Developer = "misslsf";
         const string UninstallKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\XiangMuDangAnShi";
 
