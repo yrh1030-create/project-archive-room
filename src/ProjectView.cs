@@ -827,18 +827,20 @@ namespace DangAn
             }
             string asOf = Ui.Prompt("七公开公告栏", "公告截至日期（直接确定 = 今天）：", DateTime.Now.ToString("yyyy年M月d日"));
             if (asOf == null) return;
+            string dir = SevenDisclosure.PickDir(this, P.Name);
+            if (dir == null) return;
             btn.Enabled = false;
             var th = new System.Threading.Thread(() =>
             {
                 SevenDisclosure.Result r = null; string err = null;
-                try { r = SevenDisclosure.Build(St, cfg, P, asOf, AiChat.OutDir, s => m.SetStatus("七公开：" + s)); }
+                try { r = SevenDisclosure.Build(St, cfg, P, asOf, dir, s => m.SetStatus("七公开：" + s)); }
                 catch (Exception ex) { err = ex.Message; }
                 BeginInvoke(new Action(() =>
                 {
                     btn.Enabled = true;
                     if (err != null) { m.SetStatus("七公开没生成：" + err); Ui.Info("七公开没生成：" + err); return; }
                     m.SetStatus("七公开公告栏已生成");
-                    string msg = "已生成七公开电子公告栏（佐证材料 " + r.Thumbs + " 张）：\n网页版：" + Path.GetFileName(r.Html) + (r.Pdf != null ? "\nPDF：" + Path.GetFileName(r.Pdf) : "\n" + string.Join("\n", r.Log))
+                    string msg = "已生成七公开电子公告栏（佐证材料 " + r.Thumbs + " 张），保存在：\n" + dir + "\n\n网页版：" + Path.GetFileName(r.Html) + (r.Pdf != null ? "\nPDF：" + Path.GetFileName(r.Pdf) : "\n" + string.Join("\n", r.Log))
                         + (r.Data.Missing.Count > 0 ? "\n\n档案里还缺：\n· " + string.Join("\n· ", r.Data.Missing.Take(8)) : "") + "\n\n现在打开网页版看看吗？";
                     if (Ui.Ask(msg)) Ui.Open(r.Html); else Ui.Reveal(r.Pdf ?? r.Html);
                 }));

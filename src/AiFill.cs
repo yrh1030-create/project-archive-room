@@ -22,6 +22,8 @@ namespace DangAn
         public string KeyData { get; set; }
         /// <summary>上次从接口查到的可用模型（用于下拉切换）。</summary>
         public List<string> Models { get; set; }
+        /// <summary>上次七公开保存的位置。</summary>
+        public string SevenDir { get; set; }
         public AiConfig() { Provider = "DeepSeek"; BaseUrl = "https://api.deepseek.com"; Model = "deepseek-flash"; KeyData = ""; Models = new List<string>(); }
 
         /// <summary>名称、接口地址、默认模型。都是兼容 OpenAI 的 /chat/completions 接口。</summary>

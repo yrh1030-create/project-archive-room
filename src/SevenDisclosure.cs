@@ -9,6 +9,7 @@ using System.Net;
 using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
+using IWin32Window = System.Windows.Forms.IWin32Window;
 
 namespace DangAn
 {
@@ -342,6 +343,19 @@ tr{break-inside:avoid;page-break-inside:avoid}
 
         // ---------------- PDF ----------------
         /// <summary>HTML 转 PDF：优先用 Edge（排版与网页一致），没有 Edge 时用 Word。成功返回 null，否则返回原因。</summary>
+        /// <summary>弹出“选择保存位置”（记住上次选的文件夹）；取消返回 null。须在界面线程调用。</summary>
+        public static string PickDir(IWin32Window owner, string projectName)
+        {
+            var cfg = AiConfig.Load();
+            string last = !string.IsNullOrEmpty(cfg.SevenDir) && Directory.Exists(cfg.SevenDir) ? cfg.SevenDir : Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+            using (var d = new System.Windows.Forms.FolderBrowserDialog { Description = "选择“" + projectName + "”七公开公告栏的保存位置（会生成网页版 .html 和 .pdf）", SelectedPath = last, ShowNewFolderButton = true })
+            {
+                if (d.ShowDialog(owner) != System.Windows.Forms.DialogResult.OK) return null;
+                cfg.SevenDir = d.SelectedPath; cfg.Save();
+                return d.SelectedPath;
+            }
+        }
+
         public static string ToPdf(string html, string pdf)
         {
             var edge = new[] {

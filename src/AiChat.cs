@@ -23,6 +23,8 @@ namespace DangAn
         public readonly List<string> Outputs = new List<string>();
         public Action<string> OnTool;          // 工具执行时的提示（界面显示成灰色小字）
         public Action<string> OnOutput;        // 生成了新文件
+        /// <summary>让用户选保存位置（界面提供；取消返回 null）。</summary>
+        public Func<string, string> PickFolder;
         /// <summary>AI 提交的档案修改（合同台账、关键信息、收支），等用户确认后才写入。</summary>
         public readonly List<PendingChange> Pending = new List<PendingChange>();
         /// <summary>对话中出现过的文件（档案路径、文件名 → 完整路径），回答里提到时做成可点的链接。</summary>
@@ -192,7 +194,8 @@ namespace DangAn
                 "summary", P("string", "摘要"), "party", P("string", "对方单位"), "contract", P("string", "对应合同类型"), "voucher_no", P("string", "凭证号"),
                 "voucher_file", P("string", "凭证文件路径"), "invoice_file", P("string", "发票文件路径"), "note", P("string", "备注/依据")), "project_id", "dir", "amount"),
             Fn("make_seven_disclosure", "为一个项目生成“农村公路建设信息七公开电子公告栏”成品：AI 查档案整理七项公示内容并附佐证材料缩略图，输出 HTML 网页和 PDF。", Props(
-                "project_id", P("string", "项目编号"), "as_of", P("string", "公告截至日期，如 2026年9月24日（可省略=今天）")), "project_id"),
+                "project_id", P("string", "项目编号"), "as_of", P("string", "公告截至日期，如 2026年9月24日（可省略=今天）"),
+                "save_dir", P("string", "保存到哪个文件夹（用户说了位置才填；不填会弹窗让用户选）")), "project_id"),
             Fn("convert_to_pdf", "把 Word / Excel / 网页（html）文件转成 PDF（新文件，原文件不动）。", Props("path", P("string", "文件路径（档案路径、附件或生成的文件）")), "path"),
             Fn("dedupe_records", "查出某项目合同台账、收支明细里重复登记的记录（如两张明细表都导入了同一笔），每组提交一条合并（保留信息最全的），等用户确认。统计合同、支出前先用它查重。", Props(
                 "project_id", P("string", "项目编号")), "project_id"),
@@ -274,8 +277,14 @@ namespace DangAn
                         string id = S(a, "project_id");
                         var p = st.Proj(id) ?? st.RealProjects.FirstOrDefault(x => id != "" && x.Name.Contains(id));
                         if (p == null || p.IsRoot) return "没有这个项目：" + id;
-                        Tool("生成七公开公告栏：" + p.Name);
-                        var r = SevenDisclosure.Build(st, cfg, p, S(a, "as_of"), OutDir, s => Tool(s));
+                        string dir = S(a, "save_dir");
+                        if (dir == "" || !Directory.Exists(dir))
+                        {
+                            dir = PickFolder != null ? PickFolder(p.Name) : OutDir;
+                            if (dir == null) return "用户取消了，没有选保存位置，七公开没有生成。";
+                        }
+                        Tool("生成七公开公告栏：" + p.Name + " → " + dir);
+                        var r = SevenDisclosure.Build(st, cfg, p, S(a, "as_of"), dir, s => Tool(s));
                         Output(r.Html); if (r.Pdf != null) Output(r.Pdf);
                         return "已生成七公开电子公告栏：\n网页版：" + r.Html + (r.Pdf != null ? "\nPDF：" + r.Pdf : "") + "\n佐证材料缩略图 " + r.Thumbs + " 张。"
                             + "\n各项要点：\n" + string.Join("\n", r.Data.Sections.Select(x => x.No + "、" + x.Category + "：" + string.Join("；", x.Points.Take(2)).Replace("\n", " ")))

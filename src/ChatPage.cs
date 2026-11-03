@@ -181,6 +181,7 @@ namespace DangAn
             if (pendPanel != null) { pendPanel.Visible = false; pendList.Items.Clear(); }
             chat.OnTool = s => OnUi(() => Line("　· " + s, Ui.Sub, 9f, false));
             chat.OnOutput = p => OnUi(() => AddOutput(p));
+            chat.PickFolder = name => (string)Invoke(new Func<string>(() => SevenDisclosure.PickDir(this, name)));   // AI 在后台线程，弹窗回到界面线程
             view.Clear(); links.Clear(); attachments.Clear(); RefreshAttach();
             foreach (Control c in outRow.Controls.Cast<Control>().ToList()) { outRow.Controls.Remove(c); c.Dispose(); }
             outRow.Visible = false; tips.Visible = true;
