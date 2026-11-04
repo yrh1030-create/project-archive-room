@@ -50,31 +50,43 @@ namespace DangAn
             return best;
         }
 
-        static string Resolve(Store st, Project p, Contract c)
+        /// <summary>台账里登记的原件：档案里的相对路径、任意盘上的完整路径，或只写了文件名（在整个档案里按名字找）。</summary>
+        static string Explicit(Store st, Contract c)
         {
-            // 1) 台账里登记的来源文件
-            if (!string.IsNullOrEmpty(c.Source))
+            if (string.IsNullOrEmpty(c.Source)) return "";
+            var cands = Regex.Split(c.Source, @"[;；\r\n|]+").Select(x => x.Trim().Trim('"')).Where(x => x.Length > 0)
+                .OrderBy(x => x.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase) ? 0 : 1).ToList();
+            foreach (var raw in cands)
             {
-                // 可能登记了多个文件（用；、换行等分隔），逐个试，优先 PDF
-                var cands = Regex.Split(c.Source, @"[;；\r\n|]+").Select(x => x.Trim().Trim('"')).Where(x => x.Length > 0)
-                    .OrderBy(x => x.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase) ? 0 : 1);
-                foreach (var raw in cands)
+                try
                 {
-                    try
+                    string ext = Path.GetExtension(raw).ToLowerInvariant();
+                    if (!Exts.Contains(ext)) continue;
+                    if (Path.IsPathRooted(raw))
                     {
-                        string rel = raw;
-                        if (Path.IsPathRooted(rel) && rel.StartsWith(st.Lib.Root, StringComparison.OrdinalIgnoreCase)) rel = rel.Substring(st.Lib.Root.TrimEnd('\\').Length + 1);
-                        if (File.Exists(Path.Combine(st.Lib.Root, rel)) && Exts.Contains(Path.GetExtension(rel).ToLowerInvariant())) return rel;
+                        if (raw.StartsWith(st.Lib.Root.TrimEnd('\\') + "\\", StringComparison.OrdinalIgnoreCase)) { string rel = raw.Substring(st.Lib.Root.TrimEnd('\\').Length + 1); if (File.Exists(raw)) return rel; }
+                        else if (File.Exists(raw)) return raw;   // 档案外、别的盘上的原件
                     }
-                    catch (ArgumentException) { }   // 不是合法路径，跳过
+                    else if (File.Exists(Path.Combine(st.Lib.Root, raw))) return raw;
+                    // 路径过时或只写了文件名：在整个档案里按文件名找
+                    string name = Path.GetFileName(raw);
+                    var f = st.Lib.Files.FirstOrDefault(x => string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase) && !x.Rel.Contains(Invoices.OutFolder));
+                    if (f != null) return f.Rel;
                 }
+                catch (ArgumentException) { }   // 不是合法路径，跳过
             }
-            // 2) 在项目资料里找：合同类文件，名字里有合同类型或签订方
+            return "";
+        }
+
+        /// <summary>台账没登记（或登记的找不到）：在档案里按合同类型、签订方找合同类文件，本项目的优先；已被别的合同认领的不要。</summary>
+        static string Guess(Store st, Project p, Contract c, HashSet<string> taken)
+        {
             string key = KindKey(c.Kind);
             FileRec best = null; int bs = 0;
-            foreach (var f in st.FilesOf(p))
+            foreach (var f in st.Lib.Files)
             {
-                if (!Exts.Contains(f.Ext) || f.Rel.Contains(Invoices.OutFolder)) continue;
+                if (!Exts.Contains(f.Ext) || f.Rel.Contains(Invoices.OutFolder) || taken.Contains(f.Rel)) continue;
+                bool mine = st.InProject(f, p.Id);
                 bool contractish = f.Cat == "04 合同协议" || Regex.IsMatch(f.Name, "合同|协议");
                 if (!contractish) continue;
                 int s = 0;
@@ -84,9 +96,10 @@ namespace DangAn
                 if (s == 0) continue;
                 if (f.Ext == ".pdf") s += 3;
                 if (Regex.IsMatch(f.Name, @"\(\d\)|副本")) s -= 2;
+                if (!mine) { if (s < 14) continue; s -= 4; }   // 别的项目、根目录散件里的：要求名字对得更准
                 if (s > bs) { bs = s; best = f; }
             }
-            return best != null && bs >= 6 ? best.Rel : "";
+            return best != null && bs >= 8 ? best.Rel : "";
         }
 
         // ---------------- 无关页识别 ----------------
@@ -174,7 +187,15 @@ namespace DangAn
             var rows = new List<Row>(); int no = 0;
             foreach (var p in projects) foreach (var c in p.Contracts) rows.Add(new Row { No = ++no, P = p, C = c });
             res.Rows = rows.Count;
-            foreach (var r in rows) { if (progress != null) progress("查找合同原件 " + r.No + "/" + rows.Count); r.Source = Resolve(st, r.P, r.C); }
+            // 先认台账里登记的原件，再给没登记的找；已被别的合同认领的原件不再分给别人
+            foreach (var r in rows) { if (progress != null) progress("查找合同原件 " + r.No + "/" + rows.Count); r.Source = Explicit(st, r.C); }
+            var taken = new HashSet<string>(rows.Where(r => r.Source != "").Select(r => r.Source), StringComparer.OrdinalIgnoreCase);
+            foreach (var r in rows.Where(r => r.Source == ""))
+            {
+                r.Source = Guess(st, r.P, r.C, taken);
+                if (r.Source != "") taken.Add(r.Source);
+                else res.Log.Add("缺原件：" + r.P.Name + "「" + r.C.Kind + "」" + (r.C.Source != "" ? "（台账登记的“" + AiClient.Cut(Path.GetFileName(r.C.Source.Split('；', ';', '\n')[0].Trim()), 40) + (Exts.Contains(Path.GetExtension(r.C.Source.Split('；', ';', '\n')[0].Trim()).ToLowerInvariant()) ? "”在档案里找不到）" : "”不是合同原件）") : "（台账没登记原件，档案里也没找到对得上的合同文件）") + "：可在合同台账右键“选择合同原件…”");
+            }
 
             // 同一份原件只出一个 PDF
             var docs = new List<Doc>();

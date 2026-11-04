@@ -65,7 +65,8 @@ namespace DangAn
             var p = Find(st, a);
             string kind = S(a, "kind"), match = S(a, "match_kind"), src = S(a, "source");
             if (kind == "") return "缺少合同类型。";
-            if (src != "") { var r = AiFinance.Resolve(st.FilesOf(p).ToList(), src); if (r != "") src = r; }
+            bool external;
+            src = SourceOf(st, p, src, out external);
             string key = match != "" ? match : kind;
             var hits = p.Contracts.Where(c => c.Kind == key).ToList();
             if (hits.Count == 0) hits = p.Contracts.Where(c => c.Kind.Contains(key) || key.Contains(c.Kind)).ToList();
@@ -77,8 +78,8 @@ namespace DangAn
                 var c = new Contract { Kind = kind, Party = S(a, "party"), Amount = N(a, "amount"), Date = S(a, "date"), Paid = N(a, "paid"), Final = S(a, "final"), Content = S(a, "content"), Note = S(a, "note"), Source = src };
                 c.Unpaid = Has(a, "unpaid") ? N(a, "unpaid") : Math.Max(0, Math.Round(c.Amount - c.Paid, 2));
                 if (c.Party == "" && c.Amount == 0) return "新增合同至少要有相对方或金额。";
-                return Add(chat, p, "合同台账", "新增 " + c.Kind + "：" + c.Party + "，" + M(c.Amount) + " 元" + (c.Date != "" ? "，" + c.Date + " 签订" : "") + (c.Paid > 0 ? "，已付 " + M(c.Paid) : ""), S(a, "note") != "" ? S(a, "note") : src,
-                    () => p.Contracts.Add(c));
+                return Add(chat, p, "合同台账", "新增 " + c.Kind + "：" + c.Party + "，" + M(c.Amount) + " 元" + (c.Date != "" ? "，" + c.Date + " 签订" : "") + (c.Paid > 0 ? "，已付 " + M(c.Paid) : "") + (external ? "（原件复制进本项目“合同协议”）" : ""), S(a, "note") != "" ? S(a, "note") : src,
+                    () => { if (external) c.Source = ImportOriginal(st, p, src); p.Contracts.Add(c); });
             }
             var diffs = new List<string>(); var sets = new List<Action>();
             Action<string, string, string, Action<string>> txt = (field, label, old, set) =>
@@ -100,7 +101,7 @@ namespace DangAn
             txt("final", "审定/决算", e.Final, v => e.Final = v);
             txt("content", "内容", e.Content, v => e.Content = v);
             txt("note", "备注", e.Note, v => e.Note = v);
-            if (src != "" && src != e.Source) { string s2 = src; diffs.Add("原件 → " + System.IO.Path.GetFileName(src)); sets.Add(() => e.Source = s2); }
+            if (src != "" && src != e.Source) { string s2 = src; bool ext2 = external; diffs.Add("原件 → " + System.IO.Path.GetFileName(src) + (external ? "（复制进本项目“合同协议”）" : "")); sets.Add(() => e.Source = ext2 ? ImportOriginal(st, p, s2) : s2); }
             if (diffs.Count == 0) return "“" + e.Kind + "”与台账一致，不用改。";
             return Add(chat, p, "合同台账", "修改 " + e.Kind + "：" + string.Join("；", diffs), S(a, "note") != "" ? S(a, "note") : src, () => { foreach (var x in sets) x(); });
         }
@@ -128,6 +129,29 @@ namespace DangAn
                     p.Payments = p.Payments.OrderBy(x => x.Dir == "收入" ? 0 : 1).ThenBy(x => x.Date == "" ? "9999" : x.Date).ToList();
                     Invoices.Link(st, p);
                 });
+        }
+
+        /// <summary>合同原件路径：本项目的、档案其他地方的都用档案相对路径；档案外（附件、别的盘）的标记出来，确认时复制进项目。</summary>
+        static string SourceOf(Store st, Project p, string src, out bool external)
+        {
+            external = false;
+            if (string.IsNullOrWhiteSpace(src)) return "";
+            var r = AiFinance.Resolve(st.FilesOf(p).ToList(), src); if (r != "") return r;
+            r = AiFinance.Resolve(st.Lib.Files, src); if (r != "") return r;
+            if (System.IO.Path.IsPathRooted(src) && System.IO.File.Exists(src)) { external = true; return src; }
+            return src;
+        }
+
+        /// <summary>把档案外的合同原件复制进项目的“04 合同协议”，返回档案里的相对路径（已有同一份文件就直接用它）。</summary>
+        public static string ImportOriginal(Store st, Project p, string full)
+        {
+            try
+            {
+                st.ImportToCategory(new[] { full }, p, "04 合同协议", null);
+                var rel = st.LastImported.FirstOrDefault();
+                return string.IsNullOrEmpty(rel) ? full : rel;
+            }
+            catch { return full; }
         }
 
         /// <summary>查出重复的收支、合同，每组提交一条“合并”修改（保留信息最全的一条），等用户确认。</summary>

@@ -119,6 +119,13 @@ namespace DangAn
                 string full = Path.IsPathRooted(src) ? src : Path.Combine(St.Lib.Root, src);
                 if (File.Exists(full)) Ui.Open(full); else Ui.Info("找不到：" + full);
             };
+            // 右键：选择 / 打开合同原件（导出合同 PDF 就按这里登记的原件）
+            var cm = new ContextMenuStrip { Font = Ui.F(9.5f) };
+            cm.Items.Add("选择合同原件…", null, (s, e) => PickContractSource());
+            cm.Items.Add("打开合同原件", null, (s, e) => { var src = conGrid.CurrentRow == null ? "" : Convert.ToString(conGrid.CurrentRow.Cells[9].Value); string full = SourcePath(src); if (full != null) Ui.Open(full); else Ui.Info("这份合同还没有登记原件，或原件找不到。右键“选择合同原件…”。"); });
+            cm.Items.Add("打开原件所在文件夹", null, (s, e) => { var src = conGrid.CurrentRow == null ? "" : Convert.ToString(conGrid.CurrentRow.Cells[9].Value); string full = SourcePath(src); if (full != null) Ui.Reveal(full); });
+            conGrid.ContextMenuStrip = cm;
+            conGrid.CellMouseDown += (s, e) => { if (e.Button == MouseButtons.Right && e.RowIndex >= 0) conGrid.CurrentCell = conGrid.Rows[e.RowIndex].Cells[Math.Max(0, e.ColumnIndex)]; };
             conTotal = Ui.Lbl("", 9.5f, false, Ui.Sub);
 
             note = new TextBox { Multiline = true, ScrollBars = ScrollBars.Vertical, Font = Ui.F(10.5f), BorderStyle = BorderStyle.FixedSingle, AcceptsReturn = true, Height = Ui.S(130) };
@@ -813,6 +820,41 @@ namespace DangAn
             Reload();
             m.SetStatus("发票：登记 " + recs.Count + " 张");
             if (msgs.Count > 0) Ui.Info(string.Join("\n", msgs.Take(20)));
+        }
+
+        string SourcePath(string src)
+        {
+            src = (src ?? "").Split('；', ';', '\n')[0].Trim();
+            if (src == "") return null;
+            string full = Path.IsPathRooted(src) ? src : Path.Combine(St.Lib.Root, src);
+            return File.Exists(full) ? full : null;
+        }
+
+        /// <summary>给合同选原件：档案外（别的盘、微信文件夹）的复制进本项目“合同协议”，换电脑、发给别人也找得到。</summary>
+        void PickContractSource()
+        {
+            if (conGrid.CurrentRow == null) { Ui.Info("先在合同台账里点选一份合同。"); return; }
+            if (conGrid.IsCurrentCellInEditMode) conGrid.EndEdit();
+            CommitContracts();   // 表格可能被点表头重新排过序：先把当前顺序存回台账，行号才对得上
+            int i = conGrid.CurrentRow.Index;
+            if (i < 0 || i >= P.Contracts.Count) return;
+            var c = P.Contracts[i];
+            string path;
+            using (var d = new OpenFileDialog { Title = "选择“" + c.Kind + "”的合同原件", Filter = "合同文件|*.pdf;*.doc;*.docx;*.wps;*.jpg;*.jpeg;*.png|所有文件|*.*" })
+            {
+                if (d.ShowDialog(this) != DialogResult.OK) return;
+                path = d.FileName;
+            }
+            string root = St.Lib.Root.TrimEnd('\\') + "\\";
+            if (path.StartsWith(root, StringComparison.OrdinalIgnoreCase)) c.Source = path.Substring(root.Length);
+            else if (Ui.Ask("这份文件不在档案文件夹里：\n" + path + "\n\n复制一份到本项目的“合同协议”里吗？（推荐：换电脑、发给别人、导出合同 PDF 都找得到）\n选“否”则只记下它现在的位置。"))
+            {
+                Cursor = Cursors.WaitCursor;
+                try { c.Source = ArchiveEdits.ImportOriginal(St, P, path); } finally { Cursor = Cursors.Default; }
+            }
+            else c.Source = path;
+            St.Save(); Reload();
+            m.SetStatus("已登记“" + c.Kind + "”的原件：" + Path.GetFileName(c.Source));
         }
 
         /// <summary>生成“七公开”电子公告栏（HTML + PDF），放在“文档\项目档案室 AI 输出”。</summary>
