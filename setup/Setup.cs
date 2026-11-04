@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
@@ -39,7 +40,8 @@ namespace DangAnSetup
             {
                 // 静默安装：/silent [安装目录] ，档案库位置自动查找
                 var old = Existing();
-                Install(args.Length > 1 ? args[1] : (old != null ? old : DefaultDir), true, SetupForm.FindDb());
+                try { Install(args.Length > 1 ? args[1] : (old != null ? old : DefaultDir), true, SetupForm.FindDb()); }
+                catch (Exception ex) { Environment.ExitCode = 1; try { File.WriteAllText(Path.Combine(Path.GetTempPath(), "项目档案室安装失败.txt"), ex.ToString(), Encoding.UTF8); } catch { } }
                 return;
             }
             Application.Run(new SetupForm());
@@ -81,48 +83,113 @@ namespace DangAnSetup
             catch { return false; }
         }
 
-        /// <summary>安装到 dir；dir 写不进去（盘不在、没有权限）时改装到默认位置。返回实际安装的位置。</summary>
+        /// <summary>安装中不影响使用的小问题（快捷方式、图标等没写成），装完一并提示。</summary>
+        public static readonly List<string> Warnings = new List<string>();
+
+        static void Try(string what, Action act)
+        {
+            try { act(); }
+            catch (Exception ex) { Warnings.Add(what + "没成功（" + ex.Message + "）"); }
+        }
+
+        /// <summary>关掉正在运行的旧版程序（先正常关闭，让它保存档案库；关不掉再强制结束）。</summary>
+        static void CloseRunning()
+        {
+            foreach (var p in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(ExeName)))
+                try
+                {
+                    if (!p.CloseMainWindow() || !p.WaitForExit(8000)) { p.Kill(); p.WaitForExit(5000); }
+                }
+                catch { }
+        }
+
+        /// <summary>写入一个文件：去掉只读属性；被占用时稍等重试。</summary>
+        static bool TryWrite(string res, string target, int tries)
+        {
+            for (int i = 0; i < tries; i++)
+            {
+                try
+                {
+                    if (File.Exists(target)) File.SetAttributes(target, FileAttributes.Normal);
+                    Extract(res, target);
+                    return true;
+                }
+                catch (IOException) { System.Threading.Thread.Sleep(400); }
+                catch (UnauthorizedAccessException) { System.Threading.Thread.Sleep(400); }
+            }
+            return false;
+        }
+
+        /// <summary>把主程序写进 dir：旧程序还占着时先把旧文件改名让开（Windows 允许给运行中的程序改名）。</summary>
+        static bool PutExe(string dir)
+        {
+            string exe = Path.Combine(dir, ExeName);
+            try { foreach (var o in Directory.GetFiles(dir, ExeName + ".old*")) try { File.Delete(o); } catch { } } catch { }
+            if (TryWrite("app.exe", exe, 10)) return true;
+            try
+            {
+                string old = exe + ".old";
+                for (int i = 2; File.Exists(old); i++) old = exe + ".old" + i;
+                File.Move(exe, old);
+            }
+            catch { }
+            return TryWrite("app.exe", exe, 10);
+        }
+
+        /// <summary>安装到 dir；dir 写不进去（盘不在、没有权限、旧程序占着）时改装到默认位置。返回实际安装的位置。</summary>
         public static string Install(string dir, bool desktop, string dbDir)
         {
+            Warnings.Clear();
             if (string.IsNullOrWhiteSpace(dir) || !CanWrite(dir))
             {
                 if (!string.Equals(dir, DefaultDir, StringComparison.OrdinalIgnoreCase) && CanWrite(DefaultDir)) dir = DefaultDir;
-                else throw new IOException("无法写入安装位置：" + dir + "\n（磁盘不可用或没有权限，请换一个位置）");
+                else throw new UnauthorizedAccessException("没有权限写入安装位置：" + dir);
             }
-            foreach (var p in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(ExeName)))
-                try { p.CloseMainWindow(); p.WaitForExit(5000); if (!p.HasExited) p.Kill(); } catch { }
-            string exe = Path.Combine(dir, ExeName);
-            // 覆盖升级：旧程序刚关闭时文件可能还被占用，稍等重试
-            for (int i = 0; ; i++)
+            CloseRunning();
+            if (!PutExe(dir))
             {
-                try { Extract("app.exe", exe); break; }
-                catch (IOException) { if (i >= 20) throw; System.Threading.Thread.Sleep(500); }
-                catch (UnauthorizedAccessException) { if (i >= 20) throw; System.Threading.Thread.Sleep(500); }
+                if (!string.Equals(dir, DefaultDir, StringComparison.OrdinalIgnoreCase) && CanWrite(DefaultDir) && PutExe(DefaultDir)) dir = DefaultDir;
+                else throw new UnauthorizedAccessException("没有权限写入：" + Path.Combine(dir, ExeName) + "\n（可能是旧版软件还开着、文件被安全软件锁住，或这个位置需要管理员权限）");
             }
-            Extract("app.ico", Path.Combine(dir, "app.ico"));
+            string exe = Path.Combine(dir, ExeName);
+            Try("写入图标", () => { if (!TryWrite("app.ico", Path.Combine(dir, "app.ico"), 5)) throw new IOException("文件被占用"); });
             // 安装程序自身复制一份，用作卸载程序
-            File.Copy(Application.ExecutablePath, Path.Combine(dir, "卸载项目档案室.exe"), true);
-            if (!string.IsNullOrEmpty(dbDir)) File.WriteAllText(Path.Combine(dir, "默认档案库.txt"), dbDir, Encoding.UTF8);
+            Try("复制卸载程序", () =>
+            {
+                string un = Path.Combine(dir, "卸载项目档案室.exe");
+                if (!string.Equals(Path.GetFullPath(un), Path.GetFullPath(Application.ExecutablePath), StringComparison.OrdinalIgnoreCase))
+                {
+                    if (File.Exists(un)) File.SetAttributes(un, FileAttributes.Normal);
+                    File.Copy(Application.ExecutablePath, un, true);
+                }
+            });
+            if (!string.IsNullOrEmpty(dbDir)) Try("记下档案库位置", () => File.WriteAllText(Path.Combine(dir, "默认档案库.txt"), dbDir, Encoding.UTF8));
 
             string programs = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), AppName);
-            Directory.CreateDirectory(programs);
-            Shortcut(Path.Combine(programs, AppName + ".lnk"), exe, dir);
-            Shortcut(Path.Combine(programs, "卸载" + AppName + ".lnk"), Path.Combine(dir, "卸载项目档案室.exe"), dir, "/uninstall");
-            if (desktop) Shortcut(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), AppName + ".lnk"), exe, dir);
-
-            using (var k = Registry.CurrentUser.CreateSubKey(UninstallKey))
+            Try("创建开始菜单快捷方式", () =>
             {
-                k.SetValue("DisplayName", AppName);
-                k.SetValue("DisplayVersion", Version);
-                k.SetValue("Publisher", Developer);
-                k.SetValue("Comments", "项目资料管理、全文查找与填报 · 开发者 " + Developer);
-                k.SetValue("DisplayIcon", exe);
-                k.SetValue("InstallLocation", dir);
-                k.SetValue("UninstallString", "\"" + Path.Combine(dir, "卸载项目档案室.exe") + "\" /uninstall");
-                k.SetValue("NoModify", 1, RegistryValueKind.DWord);
-                k.SetValue("NoRepair", 1, RegistryValueKind.DWord);
-                k.SetValue("EstimatedSize", (int)(new FileInfo(exe).Length / 1024), RegistryValueKind.DWord);
-            }
+                Directory.CreateDirectory(programs);
+                Shortcut(Path.Combine(programs, AppName + ".lnk"), exe, dir);
+                Shortcut(Path.Combine(programs, "卸载" + AppName + ".lnk"), Path.Combine(dir, "卸载项目档案室.exe"), dir, "/uninstall");
+            });
+            if (desktop) Try("创建桌面快捷方式", () => Shortcut(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), AppName + ".lnk"), exe, dir));
+
+            Try("登记到“应用和功能”", () =>
+            {
+                using (var k = Registry.CurrentUser.CreateSubKey(UninstallKey))
+                {
+                    k.SetValue("DisplayName", AppName);
+                    k.SetValue("DisplayVersion", Version);
+                    k.SetValue("Publisher", Developer);
+                    k.SetValue("Comments", "项目资料管理、全文查找与填报 · 开发者 " + Developer);
+                    k.SetValue("DisplayIcon", exe);
+                    k.SetValue("InstallLocation", dir);
+                    k.SetValue("UninstallString", "\"" + Path.Combine(dir, "卸载项目档案室.exe") + "\" /uninstall");
+                    k.SetValue("NoModify", 1, RegistryValueKind.DWord);
+                    k.SetValue("NoRepair", 1, RegistryValueKind.DWord);
+                    k.SetValue("EstimatedSize", (int)(new FileInfo(exe).Length / 1024), RegistryValueKind.DWord);
+                }
+            });
             return dir;
         }
 
@@ -132,6 +199,12 @@ namespace DangAnSetup
             using (var f = File.Create(target)) s.CopyTo(f);
         }
 
+        /// <summary>以管理员身份重新运行安装程序（参数原样带上）。用户拒绝时返回 false。</summary>
+        public static bool RunAsAdmin(string args)
+        {
+            try { Process.Start(new ProcessStartInfo(Application.ExecutablePath, args ?? "") { Verb = "runas", UseShellExecute = true }); return true; }
+            catch { return false; }
+        }
         static void Shortcut(string lnk, string target, string workDir, string args = "")
         {
             var t = Type.GetTypeFromProgID("WScript.Shell");
@@ -247,11 +320,19 @@ namespace DangAnSetup
                 Cursor = Cursors.Default;
                 MessageBox.Show((upgrade ? "升级完成！已更新为 " : "安装完成！版本 ") + SetupProgram.Version + "。\n\n"
                     + (!string.Equals(used, want, StringComparison.OrdinalIgnoreCase) ? "原位置 " + want + " 写不进去，已改装到：\n" + used + "\n快捷方式已更新到新位置。\n\n" : "")
+                    + (SetupProgram.Warnings.Count > 0 ? "有几处小问题，不影响使用：\n· " + string.Join("\n· ", SetupProgram.Warnings) + "\n\n" : "")
                     + (upgrade ? "原来的档案库、项目资料和设置都保留不变。\n" : "")
                     + "开始菜单和桌面上都有“项目档案室”。\n卸载：Windows 设置 → 应用 → 项目档案室。\n\n开发者：" + SetupProgram.Developer,
                     Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
                 if (launch.Checked) Process.Start(Path.Combine(used, "项目档案室.exe"));
                 Close();
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                Cursor = Cursors.Default; go.Enabled = true;
+                // 没权限：多半是旧版装在需要管理员权限的位置，或旧程序被锁住。提供以管理员身份重新安装
+                if (MessageBox.Show("安装失败：" + ex.Message + "\n\n要以管理员身份重新安装吗？（会弹出 Windows 的确认窗口）\n\n也可以先关掉正在运行的“项目档案室”，再点“覆盖升级”。", Text, MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes
+                    && SetupProgram.RunAsAdmin("")) Close();
             }
             catch (Exception ex)
             {
