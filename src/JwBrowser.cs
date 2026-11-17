@@ -26,6 +26,8 @@ namespace DangAn
             public string PageLabel { get; set; }
             public string Selector { get; set; }
             public bool Skip { get; set; }
+            /// <summary>下拉选项对照：档案里的说法 → 页面上的选项（实机核对后填）。</summary>
+            public Dictionary<string, string> Values { get; set; }
             public Item() { Module = Group = Label = PageLabel = Selector = ""; }
         }
 
@@ -42,6 +44,8 @@ namespace DangAn
         public bool SaveConfirmed { get; set; }
         /// <summary>建设进度默认只读，不填。</summary>
         public bool ProgressWritable { get; set; }
+        /// <summary>档案里查不到时用的默认值（字段名 → 值），如“验收方式”现在一般是交竣工合并验收。</summary>
+        public Dictionary<string, string> Defaults { get; set; }
         public List<Item> Fields { get; set; }
 
         public JwMapping()
@@ -50,6 +54,7 @@ namespace DangAn
             AddButton = "新增"; AttachArea = "附件"; SaveButton = "保存";
             TypeOptions = new Dictionary<string, string>();
             Fields = new List<Item>();
+            Defaults = new Dictionary<string, string> { { "验收方式", "交竣工合并验收" } };
         }
 
         static string FilePath { get { return Path.Combine(JwPortal.Dir, "jw-mapping.json"); } }
@@ -62,6 +67,7 @@ namespace DangAn
             if (m == null) m = new JwMapping();
             if (m.Fields == null) m.Fields = new List<Item>();
             if (m.TypeOptions == null) m.TypeOptions = new Dictionary<string, string>();
+            if (m.Defaults == null) { m.Defaults = new Dictionary<string, string> { { "验收方式", "交竣工合并验收" } }; fresh = true; }
             // 补齐骨架：每个字段一行，方便实机核对后改
             foreach (var d in JwExtract.Defs.Where(x => x.Kind != "picker"))
                 if (!m.Fields.Any(f => f.Module == d.Module && f.Group == d.Group && f.Label == d.Label))
@@ -290,14 +296,21 @@ namespace DangAn
             if (module == "建设进度" && !map.ProgressWritable) throw new InvalidOperationException("建设进度默认只读，不自动填写。");
             string host = JwPortal.HostOf(portal.Url);
             var groups = JwExtract.Defs.Where(d => d.Module == module).Select(d => d.Group).Distinct().ToList();
+            // 以前查过资料的项目也按默认值补（不改存档，只在这次填入时用）
+            fields = fields.Select(x => new JwField { Module = x.Module, Group = x.Group, Label = x.Label, Unit = x.Unit, Value = x.Value, Edited = x.Edited }).ToList();
+            JwExtract.ApplyDefaults(fields, map);
             var items = new List<Dictionary<string, object>>();
             var res = new List<JwFillResult>();
             foreach (var f in fields.Where(x => x.Module == module))
             {
                 var m = map.For(f);
                 if (m != null && m.Skip) continue;
-                if (f.Value == "") { res.Add(new JwFillResult { Group = f.Group, Label = f.Label, Why = "档案里没查到，留空没填" }); continue; }
-                items.Add(new Dictionary<string, object> { { "group", f.Group }, { "label", f.Label }, { "value", f.Value }, { "pageLabel", m != null ? m.PageLabel : "" }, { "selector", m != null ? m.Selector : "" } });
+                var def = JwExtract.Defs.FirstOrDefault(d => d.Module == f.Module && d.Group == f.Group && d.Label == f.Label);
+                if (f.Value == "") { res.Add(new JwFillResult { Group = f.Group, Label = f.Label, Why = def != null && def.Kind == "auto" ? "页面由选项目带出；档案里没查到，无法核对" : "档案里没查到，留空没填" }); continue; }
+                string val = f.Value, alias;
+                // 映射里配了“档案说法 → 页面选项”的，换成页面选项
+                if (m != null && m.Values != null && m.Values.TryGetValue(val, out alias) && !string.IsNullOrEmpty(alias)) val = alias;
+                items.Add(new Dictionary<string, object> { { "group", f.Group }, { "label", f.Label }, { "value", val }, { "pageLabel", m != null ? m.PageLabel : "" }, { "selector", m != null ? m.Selector : "" }, { "kind", def != null ? def.Kind : "" } });
             }
             PageInfo pg;
             using (var c = Connect(host, out pg))
@@ -314,7 +327,10 @@ namespace DangAn
                         var r = new JwFillResult { Group = S(o, "group"), Label = S(o, "label"), Now = S(o, "now"), Old = S(o, "old"), Why = S(o, "why"), Ok = B(o, "ok"), Kept = B(o, "kept"), Same = B(o, "same") };
                         r.Value = items.First(i => (string)i["group"] == r.Group && (string)i["label"] == r.Label)["value"] as string;
                         object op; if (o.TryGetValue("options", out op) && op is object[]) r.Options = ((object[])op).Select(Convert.ToString).ToList();
-                        if (B(o, "ro") && r.Ok) r.Why = "日期等只读控件，已直接写入，请看一眼页面是否认";
+                        if (B(o, "ro") && r.Ok) r.Why = "日期控件，已直接写入，请看一眼页面是否认";
+                        if (B(o, "fuzzy") && r.Ok) r.Why = "要填“" + r.Value + "”，页面没有一模一样的，按最接近的选项选了，请看一眼";
+                        if (B(o, "dflt") && r.Ok) r.Why = (r.Why != "" ? r.Why + "；" : "") + "原来是页面默认选项";
+                        if (B(o, "check")) Check(r);
                         res.Add(r);
                     }
                 }
@@ -381,6 +397,17 @@ namespace DangAn
             return res;
         }
 
+        /// <summary>选项目后系统自动带出的栏：不填，只把页面值和档案值对一下。</summary>
+        static void Check(JwFillResult r)
+        {
+            double a, b;
+            string page = r.Now.Trim();
+            if (page == "") { r.Kept = true; r.Why = "页面还没带出（先点“+”选计划项目），档案是 " + r.Value; return; }
+            bool same = double.TryParse(page, out a) && double.TryParse(r.Value, out b) ? Math.Abs(a - b) < 0.005 : page == r.Value;
+            if (same) { r.Same = true; return; }
+            r.Kept = true; r.Why = "页面带出的是 " + page + "，档案是 " + r.Value + "，不一致，请核对（软件不改这一栏）";
+        }
+
         static string Mb(long n) { return (n / 1048576.0).ToString("0.00") + "MB"; }
         static string S(Dictionary<string, object> o, string k) { object v; return o.TryGetValue(k, out v) && v != null ? Convert.ToString(v) : ""; }
         static bool B(Dictionary<string, object> o, string k) { object v; return o.TryGetValue(k, out v) && v is bool && (bool)v; }
@@ -388,8 +415,8 @@ namespace DangAn
         // ------------------------------------------------------------ 页面里的助手脚本
         /// <summary>注入到页面的脚本：按标签找栏位（含同源 iframe）、按分组区分同名栏、填值、找上传框、点“新增”。带审核/上报/提交字样的一律不点。</summary>
         public static readonly string Helper = @"(function(){
-if(window.__jw&&window.__jw.v===3)return 'ok';
-var J={v:3};
+if(window.__jw&&window.__jw.v===4)return 'ok';
+var J={v:4};
 var BAD=/" + Forbidden + @"/;
 var UNIT=/^[（(]?(万元|元|公里|km|千米|天|日历天|日)?[）)]?$/;
 function norm(s){return (s||'').replace(/[\s　 ：:＊*]/g,'');}
@@ -421,31 +448,37 @@ function mark(el,c){try{el.style.outline='2px solid '+(c||'#2e7d32');el.style.ou
 function setRaw(el,v){var w=el.ownerDocument.defaultView,proto=el.tagName==='TEXTAREA'?w.HTMLTextAreaElement.prototype:w.HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(proto,'value').set.call(el,v);fire(el,['input','change','keyup','blur']);}
 function radioText(r){var d=r.ownerDocument;if(r.id){var l=d.querySelector('label[for=""'+r.id+'""]');if(l)return l.textContent.trim();}if(r.parentElement&&r.parentElement.tagName==='LABEL')return r.parentElement.textContent.trim();var s=r.nextSibling;while(s&&!(s.textContent||'').trim())s=s.nextSibling;return s?(s.textContent||'').trim():(r.value||'');}
 function emptyish(t){return /^(请选择|全部|无|-+|)$/.test(norm(t));}
-function setVal(el,v,over){
+function loose(s){return norm(s).replace(/[（）()【】\[\]、，,。.\-—_]/g,'').replace(/信息$/,'');}
+function setVal(el,v,over,kind){
  var w=el.ownerDocument.defaultView;
- if(el.disabled)return {ok:false,why:'这一栏是灰的，不能编辑'};
+ if(kind==='auto'){var cur=el.tagName==='SELECT'?(el.selectedIndex>=0?el.options[el.selectedIndex].text.trim():''):(el.value||'');return {ok:false,check:true,now:cur};}
+ if(el.disabled)return {ok:false,why:'这一栏是灰的，不能编辑',now:el.value||''};
  if(el.tagName==='SELECT'){
-  var opts=[],idx=-1;for(var i=0;i<el.options.length;i++){var o=el.options[i];opts.push(o.text.trim());if(norm(o.text)===norm(v))idx=i;}
-  var old=el.selectedIndex>=0?el.options[el.selectedIndex].text.trim():'';
+  var opts=[],idx=-1,near=[],lv=loose(v);
+  for(var i=0;i<el.options.length;i++){var t=el.options[i].text.trim(),lt=loose(t);opts.push(t);if(norm(t)===norm(v))idx=i;else if(lt.length>=2&&lv.length>=2&&(lt.indexOf(lv)>=0||lv.indexOf(lt)>=0))near.push(i);}
+  var fuzzy=false;if(idx<0&&near.length===1){idx=near[0];fuzzy=true;}
+  var si=el.selectedIndex,old=si>=0?el.options[si].text.trim():'';
   if(idx<0)return {ok:false,why:'下拉里没有“'+v+'”这个选项，没选',options:opts,old:old};
-  if(el.selectedIndex===idx)return {ok:true,now:old,same:true};
-  if(!emptyish(old)&&!over)return {ok:false,kept:true,why:'页面已选“'+old+'”，没覆盖',old:old};
+  if(si===idx)return {ok:true,now:old,same:true};
+  var dflt=emptyish(old)||si<=0;   // 第一项是页面默认，不算人选过
+  if(!dflt&&!over)return {ok:false,kept:true,why:'页面已选“'+old+'”，没覆盖',old:old};
   el.selectedIndex=idx;fire(el,['input','change']);try{if(w.layui&&w.layui.form)w.layui.form.render('select');}catch(x){}
-  mark(el);return {ok:true,now:el.options[idx].text.trim(),old:emptyish(old)?'':old};
+  mark(el);return {ok:true,now:el.options[idx].text.trim(),old:emptyish(old)?'':old,fuzzy:fuzzy,dflt:dflt&&!emptyish(old)};
  }
  var ty=(el.type||'').toLowerCase();
  if(ty==='radio'||ty==='checkbox'){
   var rs=(el.form||el.ownerDocument).querySelectorAll('input[type=""'+ty+'""]'),names=[];
-  for(var i=0;i<rs.length;i++){var r=rs[i];if(r.name!==el.name)continue;var t=radioText(r);names.push(t);if(norm(t)===norm(v)){if(r.checked)return {ok:true,now:t,same:true};r.click();mark(r.parentElement||r);return {ok:true,now:t};}}
+  for(var i2=0;i2<rs.length;i2++){var r=rs[i2];if(r.name!==el.name)continue;var t2=radioText(r);names.push(t2);if(norm(t2)===norm(v)){if(r.checked)return {ok:true,now:t2,same:true};r.click();mark(r.parentElement||r);return {ok:true,now:t2};}}
   return {ok:false,why:'单选里没有“'+v+'”，没选',options:names};
  }
  var old2=el.value||'';
  if(old2===v)return {ok:true,now:v,same:true};
+ if(el.readOnly&&kind!=='date')return {ok:false,why:'这一栏是只读的（一般由点“+”选项目带出），没填',now:old2};
  if(old2!==''&&!over)return {ok:false,kept:true,why:'页面已有“'+old2+'”，没覆盖',old:old2};
  var ro=el.readOnly;setRaw(el,v);mark(el);
  return {ok:true,now:el.value,old:old2,ro:ro};
 }
-function heads(groups){var hs=[];docs().forEach(function(d){groups.forEach(function(g){findText(d,function(t){return t===norm(g);}).forEach(function(el){hs.push({el:el,name:g});});});});return hs;}
+function heads(groups){var hs=[];docs().forEach(function(d){groups.forEach(function(g){findText(d,function(t){var G=norm(g);return t===G||(t.indexOf(G)===0&&/^[（(]/.test(t.substr(G.length)));}).forEach(function(el){hs.push({el:el,name:g});});});});return hs;}
 J.pageHas=function(groups){var hs=heads(groups),f=[];hs.forEach(function(h){if(f.indexOf(h.name)<0)f.push(h.name);});
  var prog=false;docs().forEach(function(d){if(findText(d,function(t){return t==='建设进度'||t==='进度信息';}).length)prog=true;});
  return JSON.stringify({found:f,progress:prog});};
@@ -465,7 +498,7 @@ J.fill=function(items,groups,over){
     else if(cs.length>1){r.ok=false;r.why='页面上有 '+cs.length+' 个“'+it.label+'”，分不清是哪一组的，没填（可在映射里配置）';}
     else el=ctrlFor(cs[0]);
    }
-   if(el){var s=setVal(el,it.value,over);for(var k in s)r[k]=s[k];}
+   if(el){var s=setVal(el,it.value,over,it.kind);for(var k in s)r[k]=s[k];}
   }catch(e){r.ok=false;r.why='出错：'+e.message;}
   out.push(r);
  });

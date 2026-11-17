@@ -19,11 +19,11 @@ namespace DangAn
 
         public static readonly JwFieldDef[] Defs =
         {
-            new JwFieldDef(Bid, "招投项目信息", "招标类型", "", "select", "决策／采购形式或招标文件里的招标类型"),
-            new JwFieldDef(Bid, "招投项目信息", "计划项目名称", "", "picker", "页面用“+”从计划库挑选，由人选"),
-            new JwFieldDef(Bid, "招投项目信息", "计划总投资", "万元", "number", "投资概算／可研投资（档案多为元，换算成万元）"),
-            new JwFieldDef(Bid, "招投项目信息", "实际总投资", "万元", "number", "结算、决算或审计审定金额；没有就留空，不能用发票加总"),
-            new JwFieldDef(Bid, "招投项目信息", "计划里程", "公里", "number", "计划或设计文件里的建设里程"),
+            new JwFieldDef(Bid, "招标项目信息", "招标类型", "", "select", "本次招标的内容类型（如施工、监理、施工及监理等，以档案原文为准；页面选项以系统为准）"),
+            new JwFieldDef(Bid, "招标项目信息", "计划项目名称", "", "picker", "页面用“+”从计划库挑选，由人选"),
+            new JwFieldDef(Bid, "招标项目信息", "计划总投资", "万元", "auto", "投资概算／可研批复投资（页面由选计划项目带出，只核对）"),
+            new JwFieldDef(Bid, "招标项目信息", "实际总投资", "万元", "number", "结算、决算或审计审定金额；没有就留空，不能用发票加总"),
+            new JwFieldDef(Bid, "招标项目信息", "计划里程", "公里", "auto", "计划或设计文件里的建设里程（页面由选计划项目带出，只核对）"),
             new JwFieldDef(Bid, "施工招标", "招标方式", "", "select", "公开招标、竞争性磋商、询价、直接委托等，以档案原文为准"),
             new JwFieldDef(Bid, "施工招标", "中标单位", "", "text", "中标/成交通知书、施工合同乙方全称"),
             new JwFieldDef(Bid, "施工招标", "中标时间", "", "date", "中标/成交通知书日期"),
@@ -39,7 +39,7 @@ namespace DangAn
             new JwFieldDef(Bid, "监理招标", "证书编号", "", "text", "总监理工程师的证书/注册号"),
             new JwFieldDef(Acc, "合同信息", "项目名称", "", "picker", "页面用“+”挑选，由人选"),
             new JwFieldDef(Acc, "合同信息", "验收项目别名", "", "text", "档案里的简称或别名；没有就留空"),
-            new JwFieldDef(Acc, "合同信息", "验收方式", "", "select", "交工、竣工是否分开验收等，以验收文件为准"),
+            new JwFieldDef(Acc, "合同信息", "验收方式", "", "select", "现在都是交竣工合并验收；只有档案明确写了交工、竣工分开验收的才写分开，查不到留空（软件按默认填合并验收）"),
             new JwFieldDef(Acc, "交工验收信息", "组织验收单位", "", "text", "交工验收证书上的组织单位"),
             new JwFieldDef(Acc, "交工验收信息", "验收时间", "", "date", "交工验收日期"),
             new JwFieldDef(Acc, "交工验收信息", "交工验收里程", "公里", "number", "交工验收里程"),
@@ -97,7 +97,7 @@ namespace DangAn
                     if (def == null || def.Kind == "picker") continue;
                     f.Unit = def.Unit;
                     if (f.Value != "" && f.Source == "") { f.Confidence = "低"; f.Source = "（AI 没给出依据，请核对）"; }
-                    if (def.Kind == "number" && f.Value != "") Number(def, f);
+                    if ((def.Kind == "number" || def.Kind == "auto") && f.Value != "") Number(def, f);
                     // 万元栏防错位：值大于 10 万的，多半没换算
                     double v;
                     if (def.Unit == "万元" && double.TryParse(f.Value, out v) && v > 100000) { f.Confidence = "低"; f.Source = "【疑似没换算成万元】" + f.Source; }
@@ -112,6 +112,7 @@ namespace DangAn
                 merged.Add(old != null && old.Edited ? old : nw);
             }
             data.Fields = merged;
+            ApplyDefaults(data.Fields, JwMapping.Load());
             data.Notes.Clear();
             object no;
             if (o.TryGetValue("notes", out no) && no is object[]) foreach (var n in (object[])no) { var t = Convert.ToString(n).Trim(); if (t != "") data.Notes.Add(t); }
@@ -132,6 +133,17 @@ namespace DangAn
                 }
             // 原件已不在本项目的去掉（没传过的）
             data.Attachments.RemoveAll(a => a.Uploaded == "" && !st.FilesOf(p).Any(f => f.Rel == a.Rel));
+        }
+
+        /// <summary>档案里查不到、人也没改过的栏，用字段映射里的默认值（如验收方式默认交竣工合并验收）。</summary>
+        public static void ApplyDefaults(List<JwField> fields, JwMapping map)
+        {
+            foreach (var f in fields)
+            {
+                string dv;
+                if (f.Value == "" && !f.Edited && map.Defaults.TryGetValue(f.Label, out dv) && !string.IsNullOrEmpty(dv))
+                { f.Value = dv; f.Confidence = "中"; f.Source = "默认值：现在都是" + dv + "（可在“字段映射”的 Defaults 里改）"; }
+            }
         }
 
         /// <summary>数字栏只留数字：去掉 AI 带上的单位；写的是“元”的换算成万元，“米”换算成公里。</summary>
