@@ -90,6 +90,9 @@ namespace DangAn
             Fields.Add(new Field(field, value, source));
         }
         public bool IsRoot { get { return Id == Store.RootProjectId; } }
+        /// <summary>是否走交委监管程序（没设时按“是”：施工许可、质监通知书也要传）。</summary>
+        public bool? JwSupervised { get; set; }
+        [System.Web.Script.Serialization.ScriptIgnore] public bool Supervised { get { return JwSupervised != false; } }
     }
 
     public class FileRec

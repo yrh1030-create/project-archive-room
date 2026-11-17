@@ -159,9 +159,11 @@ namespace DangAn
             var bXls = Ui.Btn("导出 Excel", false, "excel"); bXls.AutoSize = false; bXls.Width = Ui.S(130); bXls.Height = Ui.S(36);
             var bAi = Ui.Btn("AI 填上级报表…", true, "excel"); bAi.AutoSize = false; bAi.Width = Ui.S(130); bAi.Height = Ui.S(38);
             bAi.Click += (s, e) => AiFillForm.Start(this, St);
+            var bJw = Ui.Btn("交委以奖代补填报…", true); bJw.AutoSize = false; bJw.Width = Ui.S(130); bJw.Height = Ui.S(38);
+            bJw.Click += (s, e) => JwCenterForm.Start(FindForm(), St);
             bGen.Click += (s, e) => Generate(); bCopy.Click += (s, e) => CopyGrid(); bXls.Click += (s, e) => ExportGrid();
             ops.Padding = new Padding(Ui.S(8), Ui.S(4), 0, 0);
-            ops.Controls.AddRange(new Control[] { bAi, Ui.Gap(14), bGen, bCopy, bXls, Ui.Lbl("表格里也可直接改，\n改动只影响本次填表。", 8.5f, false, Ui.Sub) });
+            ops.Controls.AddRange(new Control[] { bAi, bJw, Ui.Gap(14), bGen, bCopy, bXls, Ui.Lbl("表格里也可直接改，\n改动只影响本次填表。", 8.5f, false, Ui.Sub) });
             pick.Controls.Add(pp, 0, 0); pick.Controls.Add(fp, 1, 0); pick.Controls.Add(ops, 2, 0);
 
             grid = Ui.Grid();
@@ -386,6 +388,15 @@ namespace DangAn
             r5.Controls.AddRange(new Control[] { bAiSet, Ui.Lbl("用于“智能填表 → AI 填上级报表”。密钥只保存在本机，不随档案库分享。", 8.5f, false, Ui.Sub) });
             ai.Controls.AddRange(new Control[] { at, aiLbl, r5 });
 
+            // 交委以奖代补系统
+            var jw = new Card { Height = Ui.S(96) };
+            var jt = Ui.Lbl("交委以奖代补系统", 11f, true, Ui.Text); jt.Location = new Point(Ui.S(16), Ui.S(12));
+            var r6 = Ui.Row(); r6.Location = new Point(Ui.S(12), Ui.S(44));
+            var bJwSet = Ui.Btn("网址和账号…", false, "gear"); bJwSet.Click += (s, e) => JwSettingsDialog.Show(FindForm(), St);
+            var bJwOpen = Ui.Btn("打开填报台…", true); bJwOpen.Click += (s, e) => JwCenterForm.Start(FindForm(), St);
+            r6.Controls.AddRange(new Control[] { bJwSet, bJwOpen, Ui.Lbl("网址、账号可随时改；密码加密存在本机，不进档案库和备份。", 8.5f, false, Ui.Sub) });
+            jw.Controls.AddRange(new Control[] { jt, r6 });
+
             // 备份
             var bk = new Card { Height = Ui.S(150) };
             var bt = Ui.Lbl("网盘备份", 11f, true, Ui.Text); bt.Location = new Point(Ui.S(16), Ui.S(12));
@@ -401,7 +412,7 @@ namespace DangAn
 
             var about = Ui.Lbl("项目档案室 " + AppInfo.Version + " · 开发者 " + AppInfo.Developer + " · 资料只保存在本机；只有使用 AI 填表时，才把相关项目的资料发给你设置的 AI 接口。", 8.5f, false, Ui.Sub);
             var aboutP = new Panel { Height = Ui.S(40) }; about.Location = new Point(Ui.S(4), Ui.S(12)); aboutP.Controls.Add(about);
-            Ui.Stack(this, null, head, loc, Ui.Gap(12), scan, Ui.Gap(12), proj, Ui.Gap(12), ai, Ui.Gap(12), bk, aboutP);
+            Ui.Stack(this, null, head, loc, Ui.Gap(12), scan, Ui.Gap(12), proj, Ui.Gap(12), ai, Ui.Gap(12), jw, Ui.Gap(12), bk, aboutP);
         }
 
         Project Sel() { return plv.SelectedItems.Count == 0 ? null : (Project)plv.SelectedItems[0].Tag; }
