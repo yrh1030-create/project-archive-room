@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Drawing;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -19,7 +19,7 @@ namespace DangAn
 {
     public static class AppInfo
     {
-        public const string Version = "1.4";
+        public const string Version = "1.5";
         public const string Developer = "misslsf";
     }
 
