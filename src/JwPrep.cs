@@ -58,7 +58,7 @@ namespace DangAn
             var r = new Result { P = p };
             var files = st.FilesOf(p).Where(f => OkExt.Contains(f.Ext) && !f.Rel.Contains(Invoices.OutFolder)).ToList();
             string decision = p.Get("决策／采购形式");
-            r.Direct = Regex.IsMatch(decision, "直接委托|直接发包|直接选取|直接指定") && !Regex.IsMatch(decision, "公开招标|竞争性|询价|比选");
+            r.Direct = Regex.IsMatch(decision, "直接委托|直接发包|直接选取|直接指定|党工委|会议研究|集体研究|会议确定|会议决定") && !Regex.IsMatch(decision, "公开招标|竞争性|询价|比选");
 
             foreach (var ru in Notice)
             {
@@ -85,7 +85,7 @@ namespace DangAn
             {
                 var s = new Slot { Module = "质量及验收", Kind = ru.Kind, Required = false };
                 Fill(st, p, files, ru, s);
-                s.Status = s.Files.Count > 0 ? "已找到" : "未找到（验收附件类型待实机确认）";
+                s.Status = s.Files.Count > 0 ? "已找到" : "未找到";
                 r.Slots.Add(s);
             }
             return r;

@@ -30,7 +30,7 @@ namespace DangAn
             new JwFieldDef(Bid, "招标项目信息", "计划总投资", "万元", "auto", "投资概算／可研批复投资（页面由选计划项目带出，只核对）"),
             new JwFieldDef(Bid, "招标项目信息", "实际总投资", "万元", "number", "结算、决算或审计审定金额；没有就留空，不能用发票加总"),
             new JwFieldDef(Bid, "招标项目信息", "计划里程", "公里", "auto", "计划或设计文件里的建设里程（页面由选计划项目带出，只核对）"),
-            new JwFieldDef(Bid, "施工招标", "招标方式", "", "select", "施工的招标／采购方式；竞争性磋商、竞争性谈判、询价、单一来源等政府采购方式选“政府采购”，网上中介超市随机选取选“随机抽取”，比选选“竞争性比选”").Opt("公开招标", "邀请招标", "随机抽取", "直接委托", "政府采购", "竞争性比选", "其它"),
+            new JwFieldDef(Bid, "施工招标", "招标方式", "", "select", "施工的招标／采购方式；竞争性磋商、竞争性谈判、询价、单一来源等政府采购方式选“政府采购”，网上中介超市随机选取选“随机抽取”，比选选“竞争性比选”；党工委会议（集体研究）直接确定施工单位、没有招标采购的选“其它”").Opt("公开招标", "邀请招标", "随机抽取", "直接委托", "政府采购", "竞争性比选", "其它"),
             new JwFieldDef(Bid, "施工招标", "中标单位", "", "text", "中标/成交通知书、施工合同乙方全称"),
             new JwFieldDef(Bid, "施工招标", "中标时间", "", "date", "中标/成交通知书日期"),
             new JwFieldDef(Bid, "施工招标", "合同签订日期", "", "date", "施工合同签订日期（合同末页、协议书落款），不能早于中标时间"),
@@ -197,6 +197,8 @@ namespace DangAn
             if (def.Unit == "万元" && u == "元") { n = n / 10000m; if (f.Confidence == "高") f.Confidence = "中"; if (f.Raw == "") f.Raw = f.Value; }
             if (def.Unit == "公里" && (u == "米" || u == "m")) { n = n / 1000m; if (f.Confidence == "高") f.Confidence = "中"; if (f.Raw == "") f.Raw = f.Value; }
             if (def.Unit == "天" && u == "个月") { f.Confidence = "低"; f.Source = "【原文按月，请换成天数】" + f.Source; return; }
+            // 系统金额只收小数点后 4 位
+            if (def.Unit == "万元") { decimal r4 = Math.Round(n, 4, MidpointRounding.AwayFromZero); if (r4 != n && f.Raw == "") f.Raw = f.Value; n = r4; }
             f.Value = n.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture);
         }
 

@@ -93,7 +93,7 @@ namespace DangAn
         public void Save()
         {
             var s = new JavaScriptSerializer().Serialize(this);
-            File.WriteAllText(FilePath, Pretty(s), new UTF8Encoding(false));
+            try { File.WriteAllText(FilePath, Pretty(s), new UTF8Encoding(false)); } catch (IOException) { }   // 另一处正在写，下次再补
         }
 
         public static string Path0 { get { return FilePath; } }
