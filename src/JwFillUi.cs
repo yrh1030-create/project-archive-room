@@ -377,7 +377,7 @@ namespace DangAn
             if (cur == null || data == null) { Ui.Info("请先在左边点选要填的项目。"); return; }
             if (data.Fields.Count == 0 || data.Fields.All(f => f.Value == "")) { Ui.Info("这个项目还没有可填的值。请先勾选它点“AI 查资料”，或在“字段核对”里手工填。"); return; }
             var acc = portal.AccountFor(cur.Id);
-            var p = cur; var fields = data.Fields.ToList(); bool over = overwrite.Checked;
+            var p = cur; var d0 = data; var fields = data.Fields.ToList(); bool over = overwrite.Checked;
             Busy(true);
             var th = new Thread(() =>
             {
@@ -386,14 +386,30 @@ namespace DangAn
                     var has = browser.PageHasText(portal, p.Name);
                     bool go = (bool)Invoke(new Func<bool>(() => Ui.Ask("把“" + p.Name + "”的值填进浏览器当前打开的“" + module + "”页面？\n" +
                         (has == false ? "\n⚠ 当前页面上没找到这个项目名，可能打开的是别的项目，请先确认！\n" : "") +
-                        "\n只填空栏" + (over ? "，并覆盖已有值" : "，页面已有的值不覆盖") + "；不会点保存、审核、上报。")));
+                        "\n只填空栏" + (over ? "，并覆盖已有值" : "，页面已有的值不覆盖") + "；这一页的附件也一起选入（表单要先保存过）。\n不会点保存、审核、上报。")));
                     if (!go) { Log("已取消填入。"); }
                     else
                     {
                         Log("填入“" + module + "”：" + p.Name);
                         var res = browser.Fill(portal, p.Name, acc != null ? acc.User : "", module, fields, JwMapping.Load(), over);
                         foreach (var r in res) Log("　" + r);
-                        Log("填好 " + res.Count(r => r.Ok) + " 项，没填 " + res.Count(r => !r.Ok) + " 项（绿框是软件填的）。请在浏览器里核对，补齐需要人选的栏（计划项目名称、项目名称等），自己保存。");
+                        Log("填好 " + res.Count(r => r.Ok) + " 项，没填 " + res.Count(r => !r.Ok && r.Group != "提示") + " 项（绿框是软件填的）。请在浏览器里核对，补齐需要人选的栏（计划项目名称、项目名称等）。");
+                        // 接着选入这一页的附件（系统要求表单先保存过才能传附件）
+                        var todo = d0.Attachments.Where(a => a.Module == module && a.Use && a.Uploaded == "" && a.Pdf != "" && File.Exists(a.Pdf) && a.PdfSize <= JwPdf.Limit).ToList();
+                        var notReady = d0.Attachments.Count(a => a.Module == module && a.Use && a.Uploaded == "" && (a.Pdf == "" || !File.Exists(a.Pdf)));
+                        if (notReady > 0) Log("　有 " + notReady + " 个附件还没准备好 PDF：到“附件”页点“重新准备附件 PDF”。");
+                        if (todo.Count == 0) Log("　这一页没有待传的附件（“附件”页里勾选“上传”并准备好 PDF 的才会传）。");
+                        else
+                        {
+                            try
+                            {
+                                var ar = browser.Attach(portal, p.Name, acc != null ? acc.User : "", todo, JwMapping.Load(), s => Log("　" + s));
+                                d0.Save(st);
+                                Log("附件：选入 " + ar.Count(x => x.StartsWith("✔")) + " / " + todo.Count + " 个。请点附件区的“保存”上传，再点页面上方“保存”。");
+                            }
+                            catch (NotSavedException nse) { Log("◆ 附件没选：" + nse.Message); }
+                        }
+                        if (!IsDisposed) BeginInvoke(new Action(() => { if (cur == p) ShowProject(p); }));
                     }
                 }
                 catch (Exception ex) { Log("✘ " + ex.Message); }

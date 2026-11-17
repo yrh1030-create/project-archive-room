@@ -6,28 +6,34 @@ using System.Text.RegularExpressions;
 
 namespace DangAn
 {
-    /// <summary>交委页面上的字段（只用截图里出现的标签、分组和单位）。Kind：text / number / date / select（选项以系统为准，不编造）/ picker（带“+”的选择器，交给人选）。</summary>
+    /// <summary>交委页面上的字段（按实际页面的标签、分组、下拉选项）。Kind：text / number / date / select / auto（选项目后系统带出，只核对）/ picker（带“+”的选择器，交给人选）。
+    /// From：合并验收那一组的值从分开验收的对应栏带过来，不再单独让 AI 找。</summary>
     public class JwFieldDef
     {
         public string Module, Group, Label, Unit, Kind, Hint;
+        public string[] Options;
+        public string From;
         public JwFieldDef(string module, string group, string label, string unit, string kind, string hint) { Module = module; Group = group; Label = label; Unit = unit; Kind = kind; Hint = hint; }
+        public JwFieldDef Opt(params string[] o) { Options = o; return this; }
+        public JwFieldDef Take(string from) { From = from; return this; }
     }
 
     public static class JwExtract
     {
         public const string Bid = "招投标信息", Acc = "质量及验收";
+        public const string Merged = "交(竣)工验收信息";
 
         public static readonly JwFieldDef[] Defs =
         {
-            new JwFieldDef(Bid, "招标项目信息", "招标类型", "", "select", "本次招标的内容类型（如施工、监理、施工及监理等，以档案原文为准；页面选项以系统为准）"),
+            new JwFieldDef(Bid, "招标项目信息", "招标类型", "", "select", "本项目单独招标选“单个招标”；几个项目打包一起招标选“打捆招标”").Opt("单个招标", "打捆招标"),
             new JwFieldDef(Bid, "招标项目信息", "计划项目名称", "", "picker", "页面用“+”从计划库挑选，由人选"),
             new JwFieldDef(Bid, "招标项目信息", "计划总投资", "万元", "auto", "投资概算／可研批复投资（页面由选计划项目带出，只核对）"),
             new JwFieldDef(Bid, "招标项目信息", "实际总投资", "万元", "number", "结算、决算或审计审定金额；没有就留空，不能用发票加总"),
             new JwFieldDef(Bid, "招标项目信息", "计划里程", "公里", "auto", "计划或设计文件里的建设里程（页面由选计划项目带出，只核对）"),
-            new JwFieldDef(Bid, "施工招标", "招标方式", "", "select", "公开招标、竞争性磋商、询价、直接委托等，以档案原文为准"),
+            new JwFieldDef(Bid, "施工招标", "招标方式", "", "select", "施工的招标／采购方式；竞争性磋商、竞争性谈判、询价、单一来源等政府采购方式选“政府采购”，网上中介超市随机选取选“随机抽取”，比选选“竞争性比选”").Opt("公开招标", "邀请招标", "随机抽取", "直接委托", "政府采购", "竞争性比选", "其它"),
             new JwFieldDef(Bid, "施工招标", "中标单位", "", "text", "中标/成交通知书、施工合同乙方全称"),
             new JwFieldDef(Bid, "施工招标", "中标时间", "", "date", "中标/成交通知书日期"),
-            new JwFieldDef(Bid, "施工招标", "合同签订日期", "", "date", "施工合同签订日期（合同末页、协议书落款）"),
+            new JwFieldDef(Bid, "施工招标", "合同签订日期", "", "date", "施工合同签订日期（合同末页、协议书落款），不能早于中标时间"),
             new JwFieldDef(Bid, "施工招标", "计划开工日期", "", "date", "合同约定的开工日期"),
             new JwFieldDef(Bid, "施工招标", "计划完工日期", "", "date", "合同约定的竣工/完工日期"),
             new JwFieldDef(Bid, "施工招标", "合同工期", "天", "number", "合同写明的工期天数（不要用日期差代替）"),
@@ -39,12 +45,12 @@ namespace DangAn
             new JwFieldDef(Bid, "监理招标", "证书编号", "", "text", "总监理工程师的证书/注册号"),
             new JwFieldDef(Acc, "合同信息", "项目名称", "", "picker", "页面用“+”挑选，由人选"),
             new JwFieldDef(Acc, "合同信息", "验收项目别名", "", "text", "档案里的简称或别名；没有就留空"),
-            new JwFieldDef(Acc, "合同信息", "验收方式", "", "select", "现在都是交竣工合并验收；只有档案明确写了交工、竣工分开验收的才写分开，查不到留空（软件按默认填合并验收）"),
+            new JwFieldDef(Acc, "合同信息", "验收方式", "", "select", "现在都是交竣工合并验收；只有档案明确写了交工、竣工分开验收的才选分开，查不到留空（软件按默认填合并）").Opt("交(竣)工分开验收信息", "交(竣)工合并验收信息"),
             new JwFieldDef(Acc, "交工验收信息", "组织验收单位", "", "text", "交工验收证书上的组织单位"),
             new JwFieldDef(Acc, "交工验收信息", "验收时间", "", "date", "交工验收日期"),
             new JwFieldDef(Acc, "交工验收信息", "交工验收里程", "公里", "number", "交工验收里程"),
-            new JwFieldDef(Acc, "交工验收信息", "验收结论", "", "select", "交工验收结论（合格等，以原文为准）"),
-            new JwFieldDef(Acc, "竣工验收信息", "是否已竣工", "", "select", "有竣工验收资料为是，没有为否；查不到留空"),
+            new JwFieldDef(Acc, "交工验收信息", "验收结论", "", "select", "交工验收结论").Opt("合格", "不合格"),
+            new JwFieldDef(Acc, "竣工验收信息", "是否已竣工", "", "select", "有竣工验收资料为是，没有为否；查不到留空").Opt("是", "否"),
             new JwFieldDef(Acc, "竣工验收信息", "组织验收单位", "", "text", "竣工验收证书上的组织单位（可能与交工不同）"),
             new JwFieldDef(Acc, "竣工验收信息", "验收时间", "", "date", "竣工验收日期"),
             new JwFieldDef(Acc, "竣工验收信息", "竣工验收里程", "公里", "number", "竣工验收里程"),
@@ -52,7 +58,18 @@ namespace DangAn
             new JwFieldDef(Acc, "竣工验收信息", "中央补助资金", "万元", "number", "资金下达文件、台账里的中央补助"),
             new JwFieldDef(Acc, "竣工验收信息", "市级补助资金", "万元", "number", "资金下达文件、台账里的市级补助"),
             new JwFieldDef(Acc, "竣工验收信息", "区县自筹资金", "万元", "number", "区县自筹部分"),
-            new JwFieldDef(Acc, "竣工验收信息", "工程质量结论", "", "select", "竣工验收质量结论，以原文为准"),
+            new JwFieldDef(Acc, "竣工验收信息", "工程质量结论", "", "select", "竣工验收质量结论").Opt("优良", "合格", "不合格"),
+            // 交竣工合并验收（现在的做法）：页面只显示这一组
+            new JwFieldDef(Acc, Merged, "组织验收单位", "", "text", "").Take("竣工验收信息·组织验收单位|交工验收信息·组织验收单位"),
+            new JwFieldDef(Acc, Merged, "验收时间", "", "date", "").Take("竣工验收信息·验收时间|交工验收信息·验收时间"),
+            new JwFieldDef(Acc, Merged, "压实度（代表值）", "", "text", "交竣工验收检测报告里的压实度代表值（有的项目页面不显示这一栏）"),
+            new JwFieldDef(Acc, Merged, "路面强度（平均值或代表值）", "", "text", "交竣工验收检测报告里的路面强度平均值或代表值（有的项目页面不显示这一栏）"),
+            new JwFieldDef(Acc, Merged, "验收里程", "公里", "number", "").Take("竣工验收信息·竣工验收里程|交工验收信息·交工验收里程"),
+            new JwFieldDef(Acc, Merged, "实际完成投资", "万元", "number", "").Take("竣工验收信息·实际完成投资"),
+            new JwFieldDef(Acc, Merged, "中央补助资金", "万元", "number", "").Take("竣工验收信息·中央补助资金"),
+            new JwFieldDef(Acc, Merged, "市级补助资金", "万元", "number", "").Take("竣工验收信息·市级补助资金"),
+            new JwFieldDef(Acc, Merged, "区县自筹资金", "万元", "number", "").Take("竣工验收信息·区县自筹资金"),
+            new JwFieldDef(Acc, Merged, "工程质量结论", "", "select", "").Opt("优良", "合格", "不合格").Take("竣工验收信息·工程质量结论|交工验收信息·验收结论"),
         };
 
         const string Prompt =
@@ -64,7 +81,7 @@ namespace DangAn
 3. 合同金额以合同原文为准，大写与小写不一致以大写为准；“实际总投资”“实际完成投资”要用结算、决算或审计审定的金额，只有发票、付款的不能算；补助资金要有资金下达文件或台账依据。
 4. 合同工期按合同写明的天数填，不要用开工、完工日期相减代替。
 5. 施工“证书编号”（项目经理 / 建造师）和监理“证书编号”（总监）要分开，不要填串。交工、竣工的“组织验收单位”“验收时间”要分别对应各自的验收文件。
-6. 下拉类字段（招标类型、招标方式、验收方式、验收结论、是否已竣工、工程质量结论）写档案原文里的说法（如“竞争性磋商”“合格”），系统选项以后再对，不要自己套用常见选项。
+6. 下拉类字段（列了【可选】的）value 必须从可选项里原样挑一个，raw 写档案原话（如档案写“竞争性磋商”，value 按说明选“政府采购”，raw 写“竞争性磋商”）；挑不准就留空并在 notes 里说明。
 7. “计划项目名称”“项目名称”是页面上用“+”挑选的，不用填。
 8. confidence 写 高 / 中 / 低：原文直接写明的为高，需要换算或推断的为中，拿不准的为低。
 9. 日期统一写 yyyy-MM-dd；原文只有年月就写 yyyy-MM。
@@ -81,7 +98,8 @@ namespace DangAn
             var sb = new StringBuilder();
             sb.AppendLine("今天是 " + DateTime.Now.ToString("yyyy-MM-dd") + "。");
             sb.AppendLine("【要填的字段】（模块｜分组｜字段｜单位｜找什么）");
-            foreach (var d in Defs.Where(x => x.Kind != "picker")) sb.AppendLine(d.Module + "｜" + d.Group + "｜" + d.Label + "｜" + d.Unit + "｜" + d.Hint);
+            foreach (var d in Defs.Where(x => x.Kind != "picker" && x.From == null))
+                sb.AppendLine(d.Module + "｜" + d.Group + "｜" + d.Label + "｜" + d.Unit + "｜" + d.Hint + (d.Options != null ? "【可选：" + string.Join("／", d.Options) + "】" : ""));
             sb.AppendLine("\n【项目档案】");
             sb.AppendLine(AiFiller.Dossier(st, p, plan, 70000));
             if (log != null) log("AI 正在抽取招投标、质量及验收字段：" + p.Name);
@@ -112,6 +130,7 @@ namespace DangAn
                 merged.Add(old != null && old.Edited ? old : nw);
             }
             data.Fields = merged;
+            Derive(data.Fields);
             ApplyDefaults(data.Fields, JwMapping.Load());
             data.Notes.Clear();
             object no;
@@ -133,6 +152,27 @@ namespace DangAn
                 }
             // 原件已不在本项目的去掉（没传过的）
             data.Attachments.RemoveAll(a => a.Uploaded == "" && !st.FilesOf(p).Any(f => f.Rel == a.Rel));
+        }
+
+        /// <summary>合并验收那一组：从竣工（没有就交工）验收的对应栏带过来。人改过的不动。</summary>
+        public static void Derive(List<JwField> fields)
+        {
+            foreach (var d in Defs.Where(x => x.From != null))
+            {
+                var f = fields.FirstOrDefault(x => x.Module == d.Module && x.Group == d.Group && x.Label == d.Label);
+                if (f == null) { f = new JwField { Module = d.Module, Group = d.Group, Label = d.Label, Unit = d.Unit }; fields.Add(f); }
+                if (f.Edited) continue;
+                f.Value = ""; f.Raw = ""; f.Source = ""; f.Confidence = "";
+                foreach (var key in d.From.Split('|'))
+                {
+                    var k = key.Split('·');
+                    var src = fields.FirstOrDefault(x => x.Module == d.Module && x.Group == k[0] && x.Label == k[1]);
+                    if (src == null || src.Value == "") continue;
+                    f.Value = src.Value; f.Raw = src.Raw; f.Confidence = src.Confidence;
+                    f.Source = "同“" + k[0] + "·" + k[1] + "”：" + src.Source;
+                    break;
+                }
+            }
         }
 
         /// <summary>档案里查不到、人也没改过的栏，用字段映射里的默认值（如验收方式默认交竣工合并验收）。</summary>

@@ -48,6 +48,7 @@ namespace DangAn
             new Rule { Kind = "交工验收资料", Name = "交工验收|交工证书|交工.*鉴定", Exclude = "申请|通知", Cats = "07" },
             new Rule { Kind = "竣工验收资料", Name = "竣工验收|竣工证书|竣工.*鉴定", Exclude = "申请|通知", Cats = "07|08" },
             new Rule { Kind = "质量检测报告", Name = "检测报告|质量鉴定|质量检测|质量评定", Exclude = "合同|协议", Cats = "07" },
+            new Rule { Kind = "验收会议纪要", Name = "验收.*纪要|纪要.*验收|验收会议", Exclude = "", Cats = "05|07" },
         };
 
         static readonly string[] OkExt = { ".pdf", ".doc", ".docx", ".wps", ".xls", ".xlsx", ".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff" };

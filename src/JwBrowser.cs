@@ -39,6 +39,8 @@ namespace DangAn
         /// <summary>业务类别 → 系统附件类型下拉里的选项（实机核对后填）。没填的按类别名包含匹配。</summary>
         public Dictionary<string, string> TypeOptions { get; set; }
         public string SaveButton { get; set; }
+        /// <summary>判断表单是否已保存的隐藏栏（有值 = 已保存）。系统要求先保存表单才能传附件。</summary>
+        public string SavedField { get; set; }
         /// <summary>只有两项都为 true 才会自动点“保存草稿”；默认都不点，由使用人自己保存。</summary>
         public bool AutoSave { get; set; }
         public bool SaveConfirmed { get; set; }
@@ -52,9 +54,19 @@ namespace DangAn
         {
             Note = "交委以奖代补系统字段映射。默认按页面中文标签找栏位；实机核对后可给个别字段填 PageLabel（页面上的叫法）或 Selector（CSS 选择器）。AutoSave、SaveConfirmed 都为 true 才会自动点保存草稿；软件任何情况下都不点审核、上报、提交。";
             AddButton = "新增"; AttachArea = "附件"; SaveButton = "保存";
-            TypeOptions = new Dictionary<string, string>();
+            TypeOptions = DefaultTypes();
+            SavedField = "#id";
             Fields = new List<Item>();
-            Defaults = new Dictionary<string, string> { { "验收方式", "交竣工合并验收" } };
+            Defaults = new Dictionary<string, string> { { "验收方式", "交(竣)工合并验收信息" } };
+        }
+
+        /// <summary>业务类别 → 系统“文件类型”选项（按实际页面）。</summary>
+        static Dictionary<string, string> DefaultTypes()
+        {
+            return new Dictionary<string, string> {
+                { "施工许可（或备案表）", "施工许可" }, { "中标通知书", "中标通知书" }, { "质量监督通知书（或备案表）", "质量监督通知书" },
+                { "施工合同", "施工合同或协议书" }, { "设计合同", "设计合同" }, { "监理合同", "监理合同" },
+                { "交工验收资料", "交工验收证书" }, { "竣工验收资料", "竣工验收报告" }, { "验收会议纪要", "会议纪要" }, { "质量检测报告", "其它交竣工证明材料" } };
         }
 
         static string FilePath { get { return Path.Combine(JwPortal.Dir, "jw-mapping.json"); } }
@@ -67,7 +79,9 @@ namespace DangAn
             if (m == null) m = new JwMapping();
             if (m.Fields == null) m.Fields = new List<Item>();
             if (m.TypeOptions == null) m.TypeOptions = new Dictionary<string, string>();
-            if (m.Defaults == null) { m.Defaults = new Dictionary<string, string> { { "验收方式", "交竣工合并验收" } }; fresh = true; }
+            foreach (var kv in DefaultTypes()) if (!m.TypeOptions.ContainsKey(kv.Key)) { m.TypeOptions[kv.Key] = kv.Value; fresh = true; }
+            if (m.SavedField == null) { m.SavedField = "#id"; fresh = true; }
+            if (m.Defaults == null) { m.Defaults = new Dictionary<string, string> { { "验收方式", "交(竣)工合并验收信息" } }; fresh = true; }
             // 补齐骨架：每个字段一行，方便实机核对后改
             foreach (var d in JwExtract.Defs.Where(x => x.Kind != "picker"))
                 if (!m.Fields.Any(f => f.Module == d.Module && f.Group == d.Group && f.Label == d.Label))
@@ -104,6 +118,9 @@ namespace DangAn
             return sb.ToString();
         }
     }
+
+    /// <summary>表单还没保存，不能传附件。</summary>
+    public class NotSavedException : IOException { public NotSavedException(string m) : base(m) { } }
 
     /// <summary>一个栏位的填写结果。</summary>
     public class JwFillResult
@@ -299,14 +316,18 @@ namespace DangAn
             // 以前查过资料的项目也按默认值补（不改存档，只在这次填入时用）
             fields = fields.Select(x => new JwField { Module = x.Module, Group = x.Group, Label = x.Label, Unit = x.Unit, Value = x.Value, Edited = x.Edited }).ToList();
             JwExtract.ApplyDefaults(fields, map);
+            JwExtract.Derive(fields);
             var items = new List<Dictionary<string, object>>();
             var res = new List<JwFillResult>();
+            int hidden = 0;
             foreach (var f in fields.Where(x => x.Module == module))
             {
                 var m = map.For(f);
                 if (m != null && m.Skip) continue;
                 var def = JwExtract.Defs.FirstOrDefault(d => d.Module == f.Module && d.Group == f.Group && d.Label == f.Label);
                 if (f.Value == "") { res.Add(new JwFillResult { Group = f.Group, Label = f.Label, Why = def != null && def.Kind == "auto" ? "页面由选项目带出；档案里没查到，无法核对" : "档案里没查到，留空没填" }); continue; }
+                if (def != null && def.Kind == "date" && System.Text.RegularExpressions.Regex.IsMatch(f.Value, @"^\d{4}-\d{2}$"))
+                { res.Add(new JwFillResult { Group = f.Group, Label = f.Label, Why = "档案只写到月（" + f.Value + "），请在页面上自己选具体日期" }); continue; }
                 string val = f.Value, alias;
                 // 映射里配了“档案说法 → 页面选项”的，换成页面选项
                 if (m != null && m.Values != null && m.Values.TryGetValue(val, out alias) && !string.IsNullOrEmpty(alias)) val = alias;
@@ -319,11 +340,20 @@ namespace DangAn
                 var found = ((object[])chk["found"]).Select(Convert.ToString).ToList();
                 if (found.Count == 0)
                     throw new IOException("当前页面上没看到“" + module + "”的分组（" + string.Join("、", groups) + "）。请先在浏览器里打开这个项目的“" + module + "”页面再点填入。" + (Convert.ToBoolean(chk["progress"]) ? "（建设进度页不自动填。）" : ""));
-                if (items.Count > 0)
+                // 先填第一组（招标类型、验收方式会切换页面上显示哪几组），等页面变完再填其余
+                var first = items.Where(i => (string)i["group"] == groups[0]).ToList();
+                var rest = items.Where(i => (string)i["group"] != groups[0]).ToList();
+                var all = new List<object>();
+                foreach (var part in new[] { first, rest })
                 {
-                    var arr = (object[])Js.DeserializeObject(Convert.ToString(c.Eval("__jw.fill(" + Js.Serialize(items) + "," + Js.Serialize(groups) + "," + (overwrite ? "true" : "false") + ")")));
-                    foreach (var o in arr.OfType<Dictionary<string, object>>())
+                    if (part.Count == 0) continue;
+                    all.AddRange((object[])Js.DeserializeObject(Convert.ToString(c.Eval("__jw.fill(" + Js.Serialize(part) + "," + Js.Serialize(groups) + "," + (overwrite ? "true" : "false") + ")"))));
+                    if (part == first) Thread.Sleep(800);
+                }
+                {
+                    foreach (var o in all.OfType<Dictionary<string, object>>())
                     {
+                        if (B(o, "skip")) { hidden++; continue; }
                         var r = new JwFillResult { Group = S(o, "group"), Label = S(o, "label"), Now = S(o, "now"), Old = S(o, "old"), Why = S(o, "why"), Ok = B(o, "ok"), Kept = B(o, "kept"), Same = B(o, "same") };
                         r.Value = items.First(i => (string)i["group"] == r.Group && (string)i["label"] == r.Label)["value"] as string;
                         object op; if (o.TryGetValue("options", out op) && op is object[]) r.Options = ((object[])op).Select(Convert.ToString).ToList();
@@ -335,6 +365,7 @@ namespace DangAn
                     }
                 }
             }
+            if (hidden > 0) res.Add(new JwFillResult { Group = "提示", Label = "隐藏的组", Same = false, Kept = true, Why = hidden + " 项在页面上没显示的组里（如合并验收时的交工、竣工两组），没填" });
             JwLog.Write(host, projectName, user, module, "填入 " + res.Count(r => r.Ok) + " 项，未填 " + res.Count(r => !r.Ok) + " 项：" + string.Join("；", res.Select(r => r.ToString())));
             return res;
         }
@@ -348,6 +379,12 @@ namespace DangAn
             PageInfo pg;
             using (var c = Connect(host, out pg))
             {
+                if (!string.IsNullOrEmpty(map.SavedField))
+                {
+                    var sv = c.Eval("__jw.savedVal(" + Js.Serialize(map.SavedField) + ")");
+                    if (sv != null && Convert.ToString(sv) == "")
+                        throw new NotSavedException("这一页还没保存过。系统要求先保存表单才能传附件：请先点页面上方橙色的“保存”，再点一次“填入当前页”（或“选入附件”）。");
+                }
                 foreach (var a in list)
                 {
                     string name = Path.GetFileName(a.Pdf);
@@ -433,7 +470,7 @@ function before(a,b){return !!(a.compareDocumentPosition(b)&4);}
 function labelMatch(t,L){return t===L||(t.indexOf(L)===0&&UNIT.test(t.substr(L.length)));}
 function groupOf(el,heads){var best=null,bn='';for(var i=0;i<heads.length;i++){var h=heads[i];if(h.el.ownerDocument!==el.ownerDocument)continue;if(h.el!==el&&before(h.el,el)&&(!best||before(best,h.el))){best=h.el;bn=h.name;}}return bn;}
 function ctrlFor(lab){
- if(lab.tagName==='LABEL'&&lab.htmlFor){var c=lab.ownerDocument.getElementById(lab.htmlFor);if(c&&isCtrl(c))return c;}
+ if(lab.tagName==='LABEL'&&lab.htmlFor){var fid=lab.htmlFor,pn=lab.parentElement;for(var up0=0;up0<4&&pn;up0++){var cs0=pn.querySelectorAll('[id]');for(var q0=0;q0<cs0.length;q0++)if(cs0[q0].id===fid&&isCtrl(cs0[q0]))return cs0[q0];pn=pn.parentElement;}}
  var n=lab;
  for(var up=0;up<4&&n&&n.tagName!=='BODY'&&n.tagName!=='TR'&&n.tagName!=='FORM';up++){
   var s=n.nextElementSibling,stop=false;
@@ -493,7 +530,8 @@ J.fill=function(items,groups,over){
     var L=norm(it.pageLabel||it.label),cs=[];
     ds.forEach(function(d){cs=cs.concat(findText(d,function(t){return labelMatch(t,L);}));});
     cs=cs.filter(function(c){return !!ctrlFor(c);});
-    if(fg[it.group]&&cs.length>0){var g=cs.filter(function(c){return groupOf(c,hs)===it.group;});cs=g;}
+    if(!fg[it.group]){r.ok=false;r.skip=true;r.why='页面上没显示“'+it.group+'”这一组，跳过';out.push(r);return;}
+    if(cs.length>0){var g=cs.filter(function(c){return groupOf(c,hs)===it.group;});cs=g;}
     if(cs.length===0){r.ok=false;r.why='页面上没找到“'+it.label+'”这一栏'+(fg[it.group]?'':'（也没看到“'+it.group+'”分组）');}
     else if(cs.length>1){r.ok=false;r.why='页面上有 '+cs.length+' 个“'+it.label+'”，分不清是哪一组的，没填（可在映射里配置）';}
     else el=ctrlFor(cs[0]);
@@ -553,7 +591,8 @@ J.clickText=function(text){
  if(c.length!==1)return JSON.stringify({ok:false,why:'页面上“'+text+'”按钮有 '+c.length+' 个，没点'});
  setTimeout(function(){c[0].click();},0);return JSON.stringify({ok:true});
 };
-J.hasText=function(s){var n=norm(s);return docs().some(function(d){try{return norm(d.body?d.body.innerText:'').indexOf(n)>=0;}catch(e){return false;}});};
+J.savedVal=function(sel){var v=null;docs().some(function(d){var e=d.querySelector(sel);if(e){v=e.value||'';return true;}return false;});return v;};
+J.hasText=function(s){var n=norm(s);return docs().some(function(d){try{var t=d.body?d.body.innerText:'';[].forEach.call(d.querySelectorAll('input'),function(x){if(x.type!=='password')t+=' '+(x.value||'');});return norm(t).indexOf(n)>=0;}catch(e){return false;}});};
 window.__jw=J;return 'ok';
 })()";
     }
