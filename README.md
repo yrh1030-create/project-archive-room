@@ -4,7 +4,7 @@
 >
 > A Windows desktop app for managing the archives of township-level public works projects (e.g. rural roads): one folder per project, full-text search, contract & finance ledgers, invoice splitting, plus AI form-filling and an AI assistant powered by DeepSeek or any OpenAI-compatible API.
 
-**版本 Version 1.5 · 开发者 Developer: misslsf**
+**版本 Version 1.6 · 开发者 Developer: misslsf**
 
 [中文](#中文说明) | [English](#english)
 
@@ -37,7 +37,7 @@
 
 ### 安装
 
-到 [Releases](../../releases) 下载 `ProjectArchiveRoom-Setup-1.5.exe`（项目档案室安装程序），双击安装。已安装旧版本时会自动覆盖升级，档案库和设置都保留。
+到 [Releases](../../releases) 下载 `ProjectArchiveRoom-Setup-1.6.exe`（项目档案室安装程序），双击安装。已安装旧版本时会自动覆盖升级，档案库和设置都保留。
 
 首次打开时选择“项目总文件夹”（放各项目资料的那个文件夹），软件会自动扫描、分类、建立档案库。
 
@@ -87,6 +87,7 @@ build.ps1   一键编译脚本
 
 ### 更新记录
 
+- **1.6**：交委填报自动保存并上传附件：填完字段先按系统规则自查（未选项目、实际总投资为空、补助资金合计不等于实际完成投资等），没问题就点“保存”，再选入附件、点附件区“保存”上传，并逐个确认系统已接收；必填栏标红时列出栏名；上传使用原件文件名；已传过的同类附件不重复传；仍不点审核、上报、提交、删除。
 - **1.5**：交委填报按实际系统页面校准：交(竣)工合并验收（默认）填“交(竣)工验收信息”一组，隐藏的组不填；同名输入框只填看得见的那个；招标类型、招标方式、验收结论等按系统下拉选项挑（竞争性磋商等归“政府采购”，党工委会议决定施工单位归“其它”）；“填入当前页”同时选入附件，表单没保存时提示先保存；两页附件的文件类型按系统选项自动选；只写到月的日期不乱填；金额保留 4 位小数。
 - **1.4**：交委“以奖代补”系统填报助手：自己勾选要报的项目，AI 查档案抽取招投标信息、质量及验收字段（每项带依据，金额换算万元，查不到留空），缺件预检并导出清单，附件自动转 PDF 并压缩到 5MB 以内；用独立的 Edge 窗口打开系统，自动填账号（验证码人输）、按页面栏目名填入当前页、在附件区新增行并选文件和类型；不点审核、上报、提交。网址和账号可随时修改，密码只加密保存在本机。
 - **1.3**：七公开电子公告栏（AI 整理七项公示内容 + 佐证缩略图，生成网页版和 PDF，可选保存位置）；AI 助手回答里的文件可点击打开原件，可拖入文件 / 压缩包，可转 PDF、查重合并、修改收支、导出指定文件；收支和合同查重合并；导入项目按下一级文件夹识别、去掉编号匹配同名项目；导出按分类的项目资料包；覆盖安装时旧位置不可写自动改装；安装包文件名带版本号。
@@ -122,7 +123,7 @@ build.ps1   一键编译脚本
 
 ### Installation
 
-Download `ProjectArchiveRoom-Setup-1.5.exe` from [Releases](../../releases) and run it. An existing installation is upgraded in place; the archive database and settings are kept.
+Download `ProjectArchiveRoom-Setup-1.6.exe` from [Releases](../../releases) and run it. An existing installation is upgraded in place; the archive database and settings are kept.
 
 On first launch, choose the root folder that contains all project folders. The app scans, classifies and builds the archive database automatically.
 
@@ -146,6 +147,7 @@ Outputs `build\out\项目档案室.exe` and the installer `安装包\项目档�
 
 ### Changelog
 
+- **1.6** — Portal filling now saves and uploads automatically: pre-checks the system's rules (project picked, actual investment present, subsidies adding up), clicks "save", selects attachments, clicks the attachment "save" and confirms each file was received; lists required fields the page flags; uploads under the original file names; skips attachment types already on the page; still never clicks review, report, submit or delete.
 - **1.5** — Portal filling calibrated against the real system pages: combined handover/completion acceptance (default) fills its own group and skips hidden groups; only visible inputs are filled when ids repeat; dropdowns use the system's options (competitive negotiation etc. map to "government procurement", Party committee decisions to "other"); "fill current page" also selects attachments and asks to save the form first; attachment file types matched on both pages; month-only dates left for the user; amounts rounded to 4 decimals.
 - **1.4** — Assistant for the transport commission's "reward-instead-of-subsidy" reporting system: pick the projects to report, let AI extract tendering and quality/acceptance fields from the archive (each with evidence, amounts in 10k yuan, blanks when not found), pre-check missing attachments with Excel export, and convert attachments to PDFs under 5 MB. A dedicated Edge window opens the system, fills the account (the user types the CAPTCHA), fills the current page by on-page labels, and adds attachment rows with file and type; it never clicks review/report/submit. URL and accounts are editable; passwords are encrypted on this PC only.
 - **1.3** — Seven-disclosure public notice board (AI-compiled, with evidence thumbnails, HTML + PDF, choose where to save); clickable file links, drag-in files/archives, PDF conversion, dedupe and payment edits in the AI assistant; duplicate merge for payments and contracts; folder import by sub-folder with numbering-insensitive name matching; categorized project package export; installer falls back when the old location is not writable; version in the installer file name.

@@ -41,6 +41,10 @@ namespace DangAn
         public string SaveButton { get; set; }
         /// <summary>判断表单是否已保存的隐藏栏（有值 = 已保存）。系统要求先保存表单才能传附件。</summary>
         public string SavedField { get; set; }
+        /// <summary>页面上方保存表单的按钮、附件区保存（上传）的按钮、“+”选项目后带出项目编号的隐藏栏。</summary>
+        public string MainSave { get; set; }
+        public string AttachSave { get; set; }
+        public string PickedField { get; set; }
         /// <summary>只有两项都为 true 才会自动点“保存草稿”；默认都不点，由使用人自己保存。</summary>
         public bool AutoSave { get; set; }
         public bool SaveConfirmed { get; set; }
@@ -55,7 +59,7 @@ namespace DangAn
             Note = "交委以奖代补系统字段映射。默认按页面中文标签找栏位；实机核对后可给个别字段填 PageLabel（页面上的叫法）或 Selector（CSS 选择器）。AutoSave、SaveConfirmed 都为 true 才会自动点保存草稿；软件任何情况下都不点审核、上报、提交。";
             AddButton = "新增"; AttachArea = "附件"; SaveButton = "保存";
             TypeOptions = DefaultTypes();
-            SavedField = "#id";
+            SavedField = "#id"; MainSave = "#save"; AttachSave = "#save_File"; PickedField = "#xmid";
             Fields = new List<Item>();
             Defaults = new Dictionary<string, string> { { "验收方式", "交(竣)工合并验收信息" } };
         }
@@ -81,6 +85,9 @@ namespace DangAn
             if (m.TypeOptions == null) m.TypeOptions = new Dictionary<string, string>();
             foreach (var kv in DefaultTypes()) if (!m.TypeOptions.ContainsKey(kv.Key)) { m.TypeOptions[kv.Key] = kv.Value; fresh = true; }
             if (m.SavedField == null) { m.SavedField = "#id"; fresh = true; }
+            if (m.MainSave == null) { m.MainSave = "#save"; fresh = true; }
+            if (m.AttachSave == null) { m.AttachSave = "#save_File"; fresh = true; }
+            if (m.PickedField == null) { m.PickedField = "#xmid"; fresh = true; }
             if (m.Defaults == null) { m.Defaults = new Dictionary<string, string> { { "验收方式", "交(竣)工合并验收信息" } }; fresh = true; }
             // 补齐骨架：每个字段一行，方便实机核对后改
             foreach (var d in JwExtract.Defs.Where(x => x.Kind != "picker"))
@@ -371,7 +378,7 @@ namespace DangAn
         }
 
         // ------------------------------------------------------------ 附件
-        /// <summary>逐个附件：找空的上传框（没有就点附件区“新增”加一行），选文件、选附件类型。只选入页面，不点提交。</summary>
+        /// <summary>只选入页面（不保存）：“选入附件”按钮用。</summary>
         public List<string> Attach(JwPortal portal, string projectName, string user, List<JwAttach> list, JwMapping map, Action<string> log)
         {
             string host = JwPortal.HostOf(portal.Url);
@@ -379,58 +386,232 @@ namespace DangAn
             PageInfo pg;
             using (var c = Connect(host, out pg))
             {
-                if (!string.IsNullOrEmpty(map.SavedField))
-                {
-                    var sv = c.Eval("__jw.savedVal(" + Js.Serialize(map.SavedField) + ")");
-                    if (sv != null && Convert.ToString(sv) == "")
-                        throw new NotSavedException("这一页还没保存过。系统要求先保存表单才能传附件：请先点页面上方橙色的“保存”，再点一次“填入当前页”（或“选入附件”）。");
-                }
-                foreach (var a in list)
-                {
-                    string name = Path.GetFileName(a.Pdf);
-                    try
-                    {
-                        if (!File.Exists(a.Pdf)) throw new IOException("上传副本不在了，请重新“准备附件 PDF”");
-                        if (new FileInfo(a.Pdf).Length > JwPdf.Limit) throw new IOException("超过 5MB，没选入");
-                        int idx = Convert.ToInt32(c.Eval("__jw.pickFile()"));
-                        if (idx < 0)
-                        {
-                            int before = Convert.ToInt32(c.Eval("__jw.files()"));
-                            var add = (Dictionary<string, object>)Js.DeserializeObject(Convert.ToString(c.Eval("__jw.clickAdd(" + Js.Serialize(map.AddButton) + "," + Js.Serialize(map.AttachArea) + ")")));
-                            if (!B(add, "ok")) throw new IOException(S(add, "why"));
-                            var end = DateTime.Now.AddSeconds(6);
-                            while (DateTime.Now < end && Convert.ToInt32(c.Eval("__jw.files()")) <= before) Thread.Sleep(250);
-                            idx = Convert.ToInt32(c.Eval("__jw.pickFile()"));
-                            if (idx < 0) throw new IOException("点了“" + map.AddButton + "”，但页面上没出现新的上传框（可能弹出了选择窗口，请看浏览器）");
-                        }
-                        string oid = c.EvalObject("__jw.target()");
-                        c.Call("DOM.setFileInputFiles", new Dictionary<string, object> { { "files", new[] { a.Pdf } }, { "objectId", oid } });
-                        string opt;
-                        if (!map.TypeOptions.TryGetValue(a.Kind, out opt) || string.IsNullOrEmpty(opt)) opt = "";
-                        string key = Regex.Replace(a.Kind, "（.*?）|\\(.*?\\)", "");
-                        if (a.Kind.Contains("纪要") || a.Why.Contains("会议纪要")) key = "中标通知书";
-                        var t = (Dictionary<string, object>)Js.DeserializeObject(Convert.ToString(c.Eval("__jw.setType(" + Js.Serialize(opt) + "," + Js.Serialize(key) + ")")));
-                        c.Eval("__jw.done()");
-                        a.Uploaded = DateTime.Now.ToString("yyyy-MM-dd HH:mm") + " 已选入页面";
-                        string msg = "✔ " + a.Kind + "：" + name + "（" + Mb(new FileInfo(a.Pdf).Length) + "）已选入；";
-                        if (B(t, "ok")) msg += "类型选“" + S(t, "now") + "”";
-                        else
-                        {
-                            object op; var opts = t.TryGetValue("options", out op) && op is object[] ? ((object[])op).Select(Convert.ToString).Where(x => x != "").ToList() : new List<string>();
-                            msg += S(t, "why") + (opts.Count > 0 ? "，请手工选（可选：" + string.Join("、", opts.Take(20)) + "）" : "");
-                        }
-                        res.Add(msg);
-                    }
-                    catch (Exception ex) { res.Add("✘ " + a.Kind + "：" + name + "：" + ex.Message); }
-                    if (log != null) log(res[res.Count - 1]);
-                }
-                if (map.AutoSave && map.SaveConfirmed && res.Any(r => r.StartsWith("✔")))
-                {
-                    var s = (Dictionary<string, object>)Js.DeserializeObject(Convert.ToString(c.Eval("__jw.clickText(" + Js.Serialize(map.SaveButton) + ")")));
-                    res.Add(B(s, "ok") ? "已点“" + map.SaveButton + "”（保存草稿，没有提交）" : "没点保存：" + S(s, "why"));
-                }
+                RequireSaved(c, map);
+                SelectFiles(c, list, map, log, res);
             }
             JwLog.Write(host, projectName, user, "附件", string.Join("；", res));
+            return res;
+        }
+
+        void RequireSaved(Cdp c, JwMapping map)
+        {
+            if (string.IsNullOrEmpty(map.SavedField)) return;
+            var sv = c.Eval("__jw.savedVal(" + Js.Serialize(map.SavedField) + ")");
+            if (sv != null && Convert.ToString(sv) == "")
+                throw new NotSavedException("这一页还没保存过。系统要求先保存表单才能传附件：请先点页面上方橙色的“保存”，再选入附件。");
+        }
+
+        /// <summary>上传用的副本：用原件的文件名（不带压缩副本的编号），系统里显示的就是这个名字。</summary>
+        static string UploadCopy(JwAttach a)
+        {
+            string name = Path.GetFileNameWithoutExtension(a.Rel);
+            if (string.IsNullOrEmpty(name)) name = Path.GetFileNameWithoutExtension(a.Pdf);
+            var m = Regex.Match(a.Level ?? "", @"拆分第 (\d+) 份");
+            if (m.Success) name += "（第" + m.Groups[1].Value + "份）";
+            name = Regex.Replace(name, @"[\\/:*?""<>|]", "_");
+            string key = BitConverter.ToString(System.Security.Cryptography.SHA1.Create().ComputeHash(Encoding.UTF8.GetBytes(a.Pdf.ToLowerInvariant()))).Replace("-", "").Substring(0, 10);
+            string dir = Path.Combine(JwPdf.CacheDir, "upload", key);
+            Directory.CreateDirectory(dir);
+            string dst = Path.Combine(dir, name + ".pdf");
+            if (!File.Exists(dst) || new FileInfo(dst).Length != new FileInfo(a.Pdf).Length) File.Copy(a.Pdf, dst, true);
+            return dst;
+        }
+
+        /// <summary>逐个附件：找空的上传框（没有就点附件区“新增”加一行），选文件、选文件类型。返回 选入的附件 → 行标记。</summary>
+        Dictionary<string, JwAttach> SelectFiles(Cdp c, List<JwAttach> list, JwMapping map, Action<string> log, List<string> res)
+        {
+            var keys = new Dictionary<string, JwAttach>();
+            var have = ((object[])Js.DeserializeObject(Convert.ToString(c.Eval("__jw.existingTypes()")))).Select(Convert.ToString).ToList();
+            int n = 0;
+            foreach (var a in list)
+            {
+                string name = Path.GetFileName(a.Pdf);
+                try
+                {
+                    if (!File.Exists(a.Pdf)) throw new IOException("上传副本不在了，请重新“准备附件 PDF”");
+                    if (new FileInfo(a.Pdf).Length > JwPdf.Limit) throw new IOException("超过 5MB，没选入");
+                    string opt;
+                    if (!map.TypeOptions.TryGetValue(a.Kind, out opt) || string.IsNullOrEmpty(opt)) opt = "";
+                    string key = Regex.Replace(a.Kind, "（.*?）|\\(.*?\\)", "");
+                    if (a.Module == JwExtract.Bid && (a.Kind.Contains("纪要") || a.Why.Contains("会议纪要"))) { key = "中标通知书"; opt = "中标通知书"; }
+                    string typeName = opt != "" ? opt : key;
+                    if (have.Any(h => h == typeName) && !a.Level.StartsWith("拆分"))
+                    { res.Add("◆ " + a.Kind + "：页面上已经有上传过的“" + typeName + "”，没再传（要换的话先在页面上删掉旧的）"); if (log != null) log(res[res.Count - 1]); continue; }
+                    string up = UploadCopy(a);
+                    name = Path.GetFileName(up);
+                    int idx = Convert.ToInt32(c.Eval("__jw.pickFile()"));
+                    if (idx < 0)
+                    {
+                        int before = Convert.ToInt32(c.Eval("__jw.files()"));
+                        var add = (Dictionary<string, object>)Js.DeserializeObject(Convert.ToString(c.Eval("__jw.clickAdd(" + Js.Serialize(map.AddButton) + "," + Js.Serialize(map.AttachArea) + ")")));
+                        if (!B(add, "ok")) throw new IOException(S(add, "why"));
+                        var end = DateTime.Now.AddSeconds(6);
+                        while (DateTime.Now < end && Convert.ToInt32(c.Eval("__jw.files()")) <= before) Thread.Sleep(250);
+                        idx = Convert.ToInt32(c.Eval("__jw.pickFile()"));
+                        if (idx < 0) throw new IOException("点了“" + map.AddButton + "”，但页面上没出现新的上传框");
+                    }
+                    string oid = c.EvalObject("__jw.target()");
+                    c.Call("DOM.setFileInputFiles", new Dictionary<string, object> { { "files", new[] { up } }, { "objectId", oid } });
+                    var t = (Dictionary<string, object>)Js.DeserializeObject(Convert.ToString(c.Eval("__jw.setType(" + Js.Serialize(opt) + "," + Js.Serialize(key) + ")")));
+                    string k = "a" + (++n);
+                    c.Eval("__jw.done(" + Js.Serialize(k) + ")");
+                    keys[k] = a;
+                    a.Uploaded = "";
+                    string msg = "✔ " + a.Kind + "：" + name + "（" + Mb(new FileInfo(up).Length) + "）已选入；";
+                    if (B(t, "ok")) msg += "文件类型选“" + S(t, "now") + "”";
+                    else
+                    {
+                        object op; var opts = t.TryGetValue("options", out op) && op is object[] ? ((object[])op).Select(Convert.ToString).Where(x => x != "").ToList() : new List<string>();
+                        msg += S(t, "why") + (opts.Count > 0 ? "，请手工选（可选：" + string.Join("、", opts.Take(20)) + "）" : "");
+                    }
+                    res.Add(msg);
+                }
+                catch (Exception ex) { res.Add("✘ " + a.Kind + "：" + name + "：" + ex.Message); }
+                if (log != null) log(res[res.Count - 1]);
+            }
+            return keys;
+        }
+
+        List<string> Layers(Cdp c)
+        {
+            try { return ((object[])Js.DeserializeObject(Convert.ToString(c.Eval("__jw.layers()")))).Select(Convert.ToString).ToList(); }
+            catch { return new List<string>(); }
+        }
+
+        /// <summary>读页面上某几栏现在的值（只读，不改）。</summary>
+        Dictionary<string, string> ReadPage(Cdp c, string module, IEnumerable<string[]> groupLabel)
+        {
+            var groups = JwExtract.Defs.Where(d => d.Module == module).Select(d => d.Group).Distinct().ToList();
+            var items = groupLabel.Select(g => new Dictionary<string, object> { { "group", g[0] }, { "label", g[1] }, { "value", "" }, { "pageLabel", "" }, { "selector", "" }, { "kind", "auto" } }).ToList();
+            var res = new Dictionary<string, string>();
+            foreach (var o in ((object[])Js.DeserializeObject(Convert.ToString(c.Eval("__jw.fill(" + Js.Serialize(items) + "," + Js.Serialize(groups) + ",false)")))).OfType<Dictionary<string, object>>())
+                if (B(o, "check")) res[S(o, "group") + "·" + S(o, "label")] = S(o, "now").Trim();
+            return res;
+        }
+
+        static double? Num(Dictionary<string, string> v, string k)
+        {
+            string s; double d;
+            if (!v.TryGetValue(k, out s) || s == "") return null;
+            return double.TryParse(s, out d) ? d : (double?)null;
+        }
+
+        /// <summary>保存前按系统的规则先查一遍（系统有的情况点保存没有任何提示），查出问题就不点。返回 null = 可以保存。</summary>
+        string PreCheck(Cdp c, string module, JwMapping map)
+        {
+            if (!string.IsNullOrEmpty(map.PickedField))
+            {
+                var pv = c.Eval("__jw.savedVal(" + Js.Serialize(map.PickedField) + ")");
+                if (pv != null && Convert.ToString(pv) == "")
+                    return "还没选项目：请先点“" + (module == JwExtract.Bid ? "计划项目名称" : "项目名称") + "”后面的“+”选好项目，再点“填入当前页”（没选项目时系统点保存没有反应）。";
+            }
+            if (module == JwExtract.Bid)
+            {
+                var v = ReadPage(c, module, new[] { new[] { "招标项目信息", "计划总投资" }, new[] { "招标项目信息", "实际总投资" } });
+                var plan = Num(v, "招标项目信息·计划总投资"); var real = Num(v, "招标项目信息·实际总投资");
+                if (real == null) return "“实际总投资”是必填的，档案里没查到结算／决算金额。请在页面上填好（和计划总投资相差不能超过 5%），再点“填入当前页”。";
+                if (plan != null && plan > 0 && Math.Abs(plan.Value - real.Value) / plan.Value > 0.05)
+                    return "实际总投资 " + real + " 和计划总投资 " + plan + " 相差超过 5%，系统不让保存。请核实后在页面上改好再点“填入当前页”。";
+            }
+            else
+            {
+                var heads = (Dictionary<string, object>)Js.DeserializeObject(Convert.ToString(c.Eval("__jw.pageHas(" + Js.Serialize(new[] { JwExtract.Merged, "竣工验收信息" }) + ")")));
+                var found = ((object[])heads["found"]).Select(Convert.ToString).ToList();
+                string g = found.Contains(JwExtract.Merged) ? JwExtract.Merged : found.Contains("竣工验收信息") ? "竣工验收信息" : null;
+                if (g != null)
+                {
+                    var v = ReadPage(c, module, new[] { "实际完成投资", "中央补助资金", "市级补助资金", "区县自筹资金" }.Select(l => new[] { g, l }));
+                    var tot = Num(v, g + "·实际完成投资"); var zy = Num(v, g + "·中央补助资金"); var sj = Num(v, g + "·市级补助资金"); var qx = Num(v, g + "·区县自筹资金");
+                    if (tot != null && (zy == null || sj == null || qx == null))
+                    {
+                        string hint = zy != null && sj != null ? "（如果其余都是区县自筹，区县自筹 = " + Math.Round(tot.Value - zy.Value - sj.Value, 4) + "）" : "";
+                        return "中央补助、市级补助、区县自筹三栏都要填（没有的填 0），加起来要等于实际完成投资 " + tot + "，否则系统保存不了。档案里没查全，请在页面上补好" + hint + "，再点“填入当前页”。";
+                    }
+                    if (tot != null && Math.Abs(tot.Value - (zy.Value + sj.Value + qx.Value)) >= 0.05)
+                        return "实际完成投资 " + tot + " ≠ 中央 " + zy + " + 市级 " + sj + " + 区县自筹 " + qx + "，系统不让保存。请在页面上改好再点“填入当前页”。";
+                }
+            }
+            return null;
+        }
+
+        /// <summary>点页面上方的“保存”（只是保存，不是审核、上报），等系统回话。</summary>
+        string SaveForm(Cdp c, JwMapping map, out bool ok)
+        {
+            ok = false;
+            string sel = Js.Serialize(map.SavedField ?? "#id");
+            string idBefore = Convert.ToString(c.Eval("__jw.savedVal(" + sel + ")") ?? "");
+            c.Eval("__jw.markLayers()");
+            var r = (Dictionary<string, object>)Js.DeserializeObject(Convert.ToString(c.Eval("__jw.clickSel(" + Js.Serialize(map.MainSave) + ")")));
+            if (!B(r, "ok")) return "没点保存：" + S(r, "why");
+            var end = DateTime.Now.AddSeconds(25);
+            while (DateTime.Now < end)
+            {
+                Thread.Sleep(500);
+                string id = Convert.ToString(c.Eval("__jw.savedVal(" + sel + ")") ?? "");
+                var now = Layers(c);
+                if (now.Any(t => t.Contains("成功")) || (idBefore == "" && id != "")) { ok = true; return "已保存" + (now.Count > 0 ? "（系统提示：" + string.Join("；", now) + "）" : ""); }
+                if (now.Count > 0) return "系统没保存，提示：" + string.Join("；", now);
+                // 必填栏没填时，系统只在栏下面标红，不弹提示
+                if (DateTime.Now > end.AddSeconds(-22))
+                {
+                    var inv = ((object[])Js.DeserializeObject(Convert.ToString(c.Eval("__jw.invalid()")))).Select(Convert.ToString).ToList();
+                    if (inv.Count > 0) return "系统没保存，这些栏要填（页面上已标红）：" + string.Join("、", inv) + "。档案里没查到的请在页面上补好，再点一次“填入当前页”。";
+                }
+            }
+            return "点了“保存”，25 秒内系统没回应。可能有必填栏没填（页面上标红的），请看浏览器。";
+        }
+
+        /// <summary>
+        /// 填完字段后一条龙：保存前自查 → 点页面上方“保存” → 选入附件 → 点附件区“保存”上传 → 等系统确认每个附件都收到了。
+        /// 只点“保存”和附件区“新增”“保存”，不点审核、上报、提交、删除。
+        /// </summary>
+        public List<string> SaveAndUpload(JwPortal portal, string projectName, string user, string module, List<JwAttach> list, JwMapping map, Action<string> log)
+        {
+            string host = JwPortal.HostOf(portal.Url);
+            var res = new List<string>();
+            Action<string> L = x => { res.Add(x); if (log != null) log(x); };
+            PageInfo pg;
+            using (var c = Connect(host, out pg))
+            {
+                string why = PreCheck(c, module, map);
+                if (why != null) { L("◆ 没保存：" + why); JwLog.Write(host, projectName, user, module, string.Join("；", res)); return res; }
+                bool ok;
+                L("点页面上方“保存”…");
+                string sr = SaveForm(c, map, out ok);
+                L(sr);
+                if (!ok) { L("◆ 表单没保存成功，附件也就传不了。按上面的提示改好后再点一次“填入当前页”。"); JwLog.Write(host, projectName, user, module, string.Join("；", res)); return res; }
+                if (list.Count == 0) { L("这一页没有待传的附件。"); JwLog.Write(host, projectName, user, module, string.Join("；", res)); return res; }
+                Thread.Sleep(600);
+                var keys = SelectFiles(c, list, map, L, new List<string>());
+                if (keys.Count == 0) { L("◆ 没有选入任何附件，没点上传。"); JwLog.Write(host, projectName, user, module, string.Join("；", res)); return res; }
+                c.Eval("__jw.markLayers()");
+                var r = (Dictionary<string, object>)Js.DeserializeObject(Convert.ToString(c.Eval("__jw.clickSel(" + Js.Serialize(map.AttachSave) + ")")));
+                if (!B(r, "ok")) { L("◆ 没点附件区的保存：" + S(r, "why")); JwLog.Write(host, projectName, user, module, string.Join("；", res)); return res; }
+                L("点附件区“保存”上传 " + keys.Count + " 个附件，等系统接收…");
+                var end = DateTime.Now.AddSeconds(Math.Max(60, keys.Count * 40));
+                var done = new HashSet<string>();
+                string err = null;
+                while (DateTime.Now < end)
+                {
+                    Thread.Sleep(1000);
+                    foreach (var o in ((object[])Js.DeserializeObject(Convert.ToString(c.Eval("__jw.uploadState()")))).OfType<Dictionary<string, object>>())
+                        if (S(o, "id") != "") done.Add(S(o, "key"));
+                    if (done.Count >= keys.Count) break;
+                    var now = Layers(c);
+                    var bad = now.Where(t => !t.Contains("成功")).ToList();
+                    if (bad.Count > 0) { err = string.Join("；", bad); break; }
+                    if (c.LastAlert != null) { err = c.LastAlert; break; }
+                }
+                foreach (var kv in keys)
+                {
+                    var a = kv.Value;
+                    if (done.Contains(kv.Key)) { a.Uploaded = DateTime.Now.ToString("yyyy-MM-dd HH:mm") + " 已上传（系统已接收）"; L("✔ 已上传：" + a.Kind + "（" + Path.GetFileNameWithoutExtension(a.Rel) + "）"); }
+                    else L("✘ 没传上：" + a.Kind + "（" + Path.GetFileNameWithoutExtension(a.Rel) + "）");
+                }
+                if (err != null) L("◆ 系统提示：" + err);
+                else if (done.Count < keys.Count) L("◆ 等了 " + (int)Math.Max(60, keys.Count * 40) + " 秒还有附件没确认收到，可能网慢，请在页面上看附件行的“下载”按钮是否能点。");
+            }
+            JwLog.Write(host, projectName, user, module, string.Join("；", res));
             return res;
         }
 
@@ -452,8 +633,8 @@ namespace DangAn
         // ------------------------------------------------------------ 页面里的助手脚本
         /// <summary>注入到页面的脚本：按标签找栏位（含同源 iframe）、按分组区分同名栏、填值、找上传框、点“新增”。带审核/上报/提交字样的一律不点。</summary>
         public static readonly string Helper = @"(function(){
-if(window.__jw&&window.__jw.v===4)return 'ok';
-var J={v:4};
+if(window.__jw&&window.__jw.v===6)return 'ok';
+var J={v:6};
 var BAD=/" + Forbidden + @"/;
 var UNIT=/^[（(]?(万元|元|公里|km|千米|天|日历天|日)?[）)]?$/;
 function norm(s){return (s||'').replace(/[\s　 ：:＊*]/g,'');}
@@ -559,7 +740,7 @@ J.login=function(u,p){
 function fileInputs(){var a=[];docs().forEach(function(d){a=a.concat([].slice.call(d.querySelectorAll('input[type=file]')));});return a;}
 J.files=function(){return fileInputs().length;};
 J.pickFile=function(){var a=fileInputs(),pick=-1;a.forEach(function(x){x.removeAttribute('data-jw-target');});
- for(var i=0;i<a.length;i++){var x=a[i];if(x.getAttribute('data-jw-used')||(x.files&&x.files.length)||x.disabled)continue;var row=x.closest('tr')||x.parentElement;if(row&&!vis(row)&&!vis(x))continue;pick=i;}
+ for(var i=0;i<a.length;i++){var x=a[i];if(x.getAttribute('data-jw-used')||(x.files&&x.files.length)||x.disabled)continue;var row=x.closest('tr')||x.parentElement;if(row&&!vis(row)&&!vis(x))continue;var hid=row&&row.querySelector('input[name=id]');if(hid&&hid.value)continue;pick=i;}
  if(pick>=0)a[pick].setAttribute('data-jw-target','1');return pick;};
 J.target=function(){var a=fileInputs();for(var i=0;i<a.length;i++)if(a[i].getAttribute('data-jw-target'))return a[i];return null;};
 function clickables(d){return [].slice.call(d.querySelectorAll('button,a,input[type=button],input[type=submit],span,div,i,li')).filter(function(e){if(!vis(e))return false;var t=e.tagName==='INPUT'?e.value:e.textContent;t=norm(t);return t.length>0&&t.length<=12;});}
@@ -583,7 +764,17 @@ J.setType=function(opt,key){
  sel.selectedIndex=idx;fire(sel,['input','change']);try{var w=sel.ownerDocument.defaultView;if(w.layui&&w.layui.form)w.layui.form.render('select');}catch(e){}
  mark(sel);return JSON.stringify({ok:true,now:opts[idx]});
 };
-J.done=function(){var x=J.target();if(x){x.setAttribute('data-jw-used','1');x.removeAttribute('data-jw-target');mark(x.parentElement||x);}return 1;};
+J.done=function(k){var x=J.target();if(x){x.setAttribute('data-jw-used','1');if(k)x.setAttribute('data-jw-key',k);x.removeAttribute('data-jw-target');mark(x.parentElement||x);}return 1;};
+J.clickSel=function(sel){var e=null;docs().some(function(d){e=d.querySelector(sel);return !!e;});
+ if(!e)return JSON.stringify({ok:false,why:'页面上没找到按钮（'+sel+'）'});var t=textOfBtn(e);
+ if(BAD.test(t))return JSON.stringify({ok:false,why:'按钮带审核/上报/提交/删除字样，不点'});
+ if(!vis(e))return JSON.stringify({ok:false,why:'按钮没显示（'+sel+'）'});
+ setTimeout(function(){e.click();},0);return JSON.stringify({ok:true,text:t});};
+J.invalid=function(){var o=[];docs().forEach(function(d){[].forEach.call(d.querySelectorAll('.help-block,[data-bv-result=INVALID]'),function(e){if(!vis(e))return;if(e.getAttribute('data-bv-result')&&e.getAttribute('data-bv-result')!=='INVALID')return;var g=e.closest('.form-group');var l=g&&g.querySelector('label');var lt=l?l.textContent.trim():'';if(lt&&o.indexOf(lt)<0)o.push(lt+'（'+(e.textContent||'').trim()+'）');});});return JSON.stringify(o);};
+J.markLayers=function(){docs().forEach(function(d){[].forEach.call(d.querySelectorAll('.layui-layer-content'),function(e){e.setAttribute('data-jw-seen','1');});});return 1;};
+J.layers=function(){var o=[];docs().forEach(function(d){[].forEach.call(d.querySelectorAll('.layui-layer-content'),function(e){if(e.getAttribute('data-jw-seen'))return;if(vis(e)){var t=(e.innerText||'').trim();if(t)o.push(t);}});});return JSON.stringify(o);};
+J.uploadState=function(){var o=[];fileInputs().forEach(function(x){var k=x.getAttribute('data-jw-key');if(!k)return;var row=x.closest('tr')||x.parentElement;var h=row&&row.querySelector('input[name=id]');o.push({key:k,id:h?(h.value||''):''});});return JSON.stringify(o);};
+J.existingTypes=function(){var o=[];docs().forEach(function(d){[].forEach.call(d.querySelectorAll('tr'),function(r){if(!vis(r))return;var h=r.querySelector('input[name=id]'),s=r.querySelector('select');if(!h||!h.value||!s||s.selectedIndex<0)return;if(!r.querySelector('input[type=file],[name=download-btn]'))return;o.push(s.options[s.selectedIndex].text.trim());});});return JSON.stringify(o);};
 J.clickText=function(text){
  if(BAD.test(norm(text)))return JSON.stringify({ok:false,why:'带审核/上报/提交字样，不点'});
  var c=[];docs().forEach(function(d){clickables(d).forEach(function(e){if(textOfBtn(e)===norm(text))c.push(e);});});
@@ -634,9 +825,10 @@ window.__jw=J;return 'ok';
                     {
                         if ((string)m == "Page.javascriptDialogOpening")
                         {
-                            var p = o["params"] as Dictionary<string, object>; object msg = null;
-                            if (p != null) p.TryGetValue("message", out msg);
-                            dialog = Convert.ToString(msg); lock (gate) Monitor.PulseAll(gate);
+                            var p = o["params"] as Dictionary<string, object>; object msg = null, type = null;
+                            if (p != null) { p.TryGetValue("message", out msg); p.TryGetValue("type", out type); }
+                            if (Convert.ToString(type) == "alert") { LastAlert = Convert.ToString(msg); SendOnly("Page.handleJavaScriptDialog", new Dictionary<string, object> { { "accept", true } }); }
+                            else { dialog = Convert.ToString(msg); lock (gate) Monitor.PulseAll(gate); }
                         }
                         else if ((string)m == "Page.javascriptDialogClosed") dialog = null;
                     }
@@ -644,6 +836,16 @@ window.__jw=J;return 'ok';
             }
             catch { }
             finally { lock (gate) { closed = true; Monitor.PulseAll(gate); } }
+        }
+
+        /// <summary>页面弹过的 alert 提示（已自动点掉）。</summary>
+        public volatile string LastAlert;
+
+        void SendOnly(string method, Dictionary<string, object> prm)
+        {
+            int id = Interlocked.Increment(ref seq);
+            var msg = js.Serialize(new Dictionary<string, object> { { "id", id }, { "method", method }, { "params", prm } });
+            ThreadPool.QueueUserWorkItem(_ => { try { lock (sendGate) ws.SendAsync(new ArraySegment<byte>(Encoding.UTF8.GetBytes(msg)), WebSocketMessageType.Text, true, CancellationToken.None).Wait(5000); } catch { } });
         }
 
         public Dictionary<string, object> Call(string method, Dictionary<string, object> prm, int timeoutMs = 20000)

@@ -17,7 +17,7 @@ namespace DangAn
         readonly Store st;
         readonly JwBrowser browser = new JwBrowser();
         JwPortal portal;
-        ListView projList; TextBox filter; CheckBox supervised, overwrite;
+        ListView projList; TextBox filter; CheckBox supervised, overwrite, autoSubmit;
         DataGridView fieldGrid, attGrid, preGrid; Label acctLbl, projTitle; TextBox log, notes;
         readonly Dictionary<string, JwPrecheck.Result> pre = new Dictionary<string, JwPrecheck.Result>();
         Project cur; JwProjectData data; bool busy, loading;
@@ -88,8 +88,9 @@ namespace DangAn
             var bAtt = Ui.Btn("选入附件（当前页）", false); bAtt.Click += (s, e) => AttachPage();
             var bOne = Ui.Btn("只重查这个项目", false); bOne.Click += (s, e) => { if (cur != null) RunAi(new List<Project> { cur }); };
             overwrite = new CheckBox { Text = "覆盖页面上已有的值", AutoSize = true, Margin = new Padding(Ui.S(10), Ui.S(10), 0, 0) };
+            autoSubmit = new CheckBox { Text = "填完自动保存并上传附件（不点审核/上报）", AutoSize = true, Checked = true, Margin = new Padding(Ui.S(10), Ui.S(10), 0, 0) };
             busyButtons.AddRange(new Control[] { bBid, bAcc, bAtt, bOne });
-            ops.Controls.AddRange(new Control[] { bBid, bAcc, bAtt, bOne, overwrite });
+            ops.Controls.AddRange(new Control[] { bBid, bAcc, bAtt, bOne, overwrite, autoSubmit });
 
             var tabs = new TabControl { Dock = DockStyle.Fill, Font = Ui.F(9.5f) };
             fieldGrid = Ui.Grid(); fieldGrid.Dock = DockStyle.Fill; fieldGrid.AllowUserToAddRows = false; fieldGrid.ReadOnly = false;
@@ -300,7 +301,7 @@ namespace DangAn
         /// <summary>勾了“上传”的附件转成 ≤5MB 的 PDF 副本；拆成几份的，每份单独一行。</summary>
         void Prep(Project p, JwProjectData d)
         {
-            foreach (var a in d.Attachments.Where(x => x.Use && x.Uploaded == "" && !x.Level.StartsWith("拆分")).ToList())
+            foreach (var a in d.Attachments.Where(x => x.Use && !x.Uploaded.Contains("已上传") && !x.Level.StartsWith("拆分")).ToList())
             {
                 string src = Path.Combine(st.Lib.Root, a.Rel);
                 try
@@ -312,7 +313,7 @@ namespace DangAn
                     Log("准备附件：" + a.Kind + " · " + Path.GetFileName(a.Rel));
                     var outs = JwPdf.Prepare(src);
                     a.Pdf = outs[0].Path; a.PdfSize = outs[0].Size; a.Level = outs[0].Level; a.Hash = h;
-                    d.Attachments.RemoveAll(x => x != a && x.Rel == a.Rel && x.Kind == a.Kind && x.Level.StartsWith("拆分") && x.Uploaded == "");
+                    d.Attachments.RemoveAll(x => x != a && x.Rel == a.Rel && x.Kind == a.Kind && x.Level.StartsWith("拆分") && !x.Uploaded.Contains("已上传"));
                     int at = d.Attachments.IndexOf(a);
                     for (int i = 1; i < outs.Count; i++)
                         d.Attachments.Insert(at + i, new JwAttach { Module = a.Module, Kind = a.Kind, Rel = a.Rel, OrigSize = a.OrigSize, Pdf = outs[i].Path, PdfSize = outs[i].Size, Level = outs[i].Level, Why = a.Why, Confidence = a.Confidence, Hash = h });
@@ -377,7 +378,7 @@ namespace DangAn
             if (cur == null || data == null) { Ui.Info("请先在左边点选要填的项目。"); return; }
             if (data.Fields.Count == 0 || data.Fields.All(f => f.Value == "")) { Ui.Info("这个项目还没有可填的值。请先勾选它点“AI 查资料”，或在“字段核对”里手工填。"); return; }
             var acc = portal.AccountFor(cur.Id);
-            var p = cur; var d0 = data; var fields = data.Fields.ToList(); bool over = overwrite.Checked;
+            var p = cur; var d0 = data; var fields = data.Fields.ToList(); bool over = overwrite.Checked, auto = autoSubmit.Checked;
             Busy(true);
             var th = new Thread(() =>
             {
@@ -386,7 +387,8 @@ namespace DangAn
                     var has = browser.PageHasText(portal, p.Name);
                     bool go = (bool)Invoke(new Func<bool>(() => Ui.Ask("把“" + p.Name + "”的值填进浏览器当前打开的“" + module + "”页面？\n" +
                         (has == false ? "\n⚠ 当前页面上没找到这个项目名，可能打开的是别的项目，请先确认！\n" : "") +
-                        "\n只填空栏" + (over ? "，并覆盖已有值" : "，页面已有的值不覆盖") + "；这一页的附件也一起选入（表单要先保存过）。\n不会点保存、审核、上报。")));
+                        "\n只填空栏" + (over ? "，并覆盖已有值" : "，页面已有的值不覆盖") + "。\n" +
+                        (auto ? "填完自动点页面上的“保存”，再把这一页的附件选入并点附件区“保存”上传。\n不会点审核、上报、提交。" : "附件只选入页面，保存由你自己点。不会点审核、上报。"))));
                     if (!go) { Log("已取消填入。"); }
                     else
                     {
@@ -394,18 +396,25 @@ namespace DangAn
                         var res = browser.Fill(portal, p.Name, acc != null ? acc.User : "", module, fields, JwMapping.Load(), over);
                         foreach (var r in res) Log("　" + r);
                         Log("填好 " + res.Count(r => r.Ok) + " 项，没填 " + res.Count(r => !r.Ok && r.Group != "提示") + " 项（绿框是软件填的）。请在浏览器里核对，补齐需要人选的栏（计划项目名称、项目名称等）。");
-                        // 接着选入这一页的附件（系统要求表单先保存过才能传附件）
-                        var todo = d0.Attachments.Where(a => a.Module == module && a.Use && a.Uploaded == "" && a.Pdf != "" && File.Exists(a.Pdf) && a.PdfSize <= JwPdf.Limit).ToList();
-                        var notReady = d0.Attachments.Count(a => a.Module == module && a.Use && a.Uploaded == "" && (a.Pdf == "" || !File.Exists(a.Pdf)));
+                        var map = JwMapping.Load();
+                        var todo = d0.Attachments.Where(a => a.Module == module && a.Use && !a.Uploaded.Contains("已上传") && a.Pdf != "" && File.Exists(a.Pdf) && a.PdfSize <= JwPdf.Limit).ToList();
+                        var notReady = d0.Attachments.Count(a => a.Module == module && a.Use && !a.Uploaded.Contains("已上传") && (a.Pdf == "" || !File.Exists(a.Pdf)));
                         if (notReady > 0) Log("　有 " + notReady + " 个附件还没准备好 PDF：到“附件”页点“重新准备附件 PDF”。");
-                        if (todo.Count == 0) Log("　这一页没有待传的附件（“附件”页里勾选“上传”并准备好 PDF 的才会传）。");
+                        if (auto)
+                        {
+                            browser.SaveAndUpload(portal, p.Name, acc != null ? acc.User : "", module, todo, map, s => Log("　" + s));
+                            d0.Save(st);
+                            int up = todo.Count(a => a.Uploaded.Contains("已上传"));
+                            Log(todo.Count == 0 ? "完成。" : "附件：上传成功 " + up + " / " + todo.Count + " 个。" + (up == todo.Count ? "请在页面上看一眼，确认无误后由你自己审核、上报。" : "没传上的看上面的提示。"));
+                        }
+                        else if (todo.Count == 0) Log("　这一页没有待传的附件（“附件”页里勾选“上传”并准备好 PDF 的才会传）。");
                         else
                         {
                             try
                             {
-                                var ar = browser.Attach(portal, p.Name, acc != null ? acc.User : "", todo, JwMapping.Load(), s => Log("　" + s));
+                                browser.Attach(portal, p.Name, acc != null ? acc.User : "", todo, map, s => Log("　" + s));
                                 d0.Save(st);
-                                Log("附件：选入 " + ar.Count(x => x.StartsWith("✔")) + " / " + todo.Count + " 个。请点附件区的“保存”上传，再点页面上方“保存”。");
+                                Log("附件已选入页面，请点附件区的“保存”上传。");
                             }
                             catch (NotSavedException nse) { Log("◆ 附件没选：" + nse.Message); }
                         }
@@ -423,7 +432,7 @@ namespace DangAn
             if (busy) return;
             if (cur == null || data == null) { Ui.Info("请先在左边点选项目。"); return; }
             var p = cur;
-            var todo = data.Attachments.Where(a => a.Use && a.Uploaded == "" && a.Pdf != "" && File.Exists(a.Pdf) && a.PdfSize <= JwPdf.Limit).ToList();
+            var todo = data.Attachments.Where(a => a.Use && !a.Uploaded.Contains("已上传") && a.Pdf != "" && File.Exists(a.Pdf) && a.PdfSize <= JwPdf.Limit).ToList();
             if (todo.Count == 0) { Ui.Info("没有待上传的附件。请在“附件”页勾选要传的，并先准备好 PDF 副本。"); return; }
             var mods = todo.Select(a => a.Module).Distinct().ToList();
             string module = mods.Count == 1 ? mods[0] : null;

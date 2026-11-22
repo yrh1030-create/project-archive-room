@@ -151,7 +151,7 @@ namespace DangAn
                     data.Attachments.Add(new JwAttach { Module = s.Module, Kind = s.Kind, Rel = f.Rel, OrigSize = f.Size, Why = s.Why, Confidence = s.Confidence, Use = s.Files.IndexOf(f) == 0 || s.Kind.Contains("纪要") });
                 }
             // 原件已不在本项目的去掉（没传过的）
-            data.Attachments.RemoveAll(a => a.Uploaded == "" && !st.FilesOf(p).Any(f => f.Rel == a.Rel));
+            data.Attachments.RemoveAll(a => !a.Uploaded.Contains("已上传") && !st.FilesOf(p).Any(f => f.Rel == a.Rel));
         }
 
         /// <summary>合并验收那一组：从竣工（没有就交工）验收的对应栏带过来。人改过的不动。</summary>
